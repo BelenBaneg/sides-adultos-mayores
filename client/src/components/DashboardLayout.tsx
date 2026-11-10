@@ -15,7 +15,10 @@ import {
 } from "@chakra-ui/react";
 import {
   AlertCircle,
+  BarChart3,
   Building2,
+  ClipboardCheck,
+  Newspaper,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -35,12 +38,14 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Panel de Control", path: "/" },
+  { icon: BarChart3, label: "Estadísticas", path: "/estadisticas" },
   { icon: Users, label: "Adultos Mayores", path: "/adultos-mayores" },
   { icon: Building2, label: "Residencias de Larga Estadia", path: "/residencias" },
   { icon: AlertCircle, label: "Alertas", path: "/alertas" },
   { icon: History, label: "Seguimientos", path: "/seguimientos" },
   { icon: FileText, label: "Visitas y Reportes", path: "/visitas-reportes" },
   { icon: Scale, label: "Derivaciones", path: "/derivaciones" },
+  { icon: Newspaper, label: "Portal de Publicaciones", path: "/portal-publicaciones" },
 ];
 
 const COLLAPSED_KEY = "sides-sidebar-collapsed";
@@ -199,7 +204,12 @@ type SidebarInnerProps = {
 function SidebarInner({ collapsed, setCollapsed, location, setLocation, user, onLogout, hideCollapseToggle }: SidebarInnerProps) {
   const items = [
     ...menuItems,
-    ...(user?.role === "superadmin" ? [{ icon: UserPlus, label: "Gestión de Personal", path: "/usuarios" }] : []),
+    ...(user?.role === "superadmin"
+      ? [
+          { icon: UserPlus, label: "Gestión de Personal", path: "/usuarios" },
+          { icon: ClipboardCheck, label: "Auditoría", path: "/auditoria" },
+        ]
+      : []),
   ];
 
   return (

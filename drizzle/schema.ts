@@ -123,6 +123,7 @@ export const adultosMayores = pgTable("adultosMayores", {
   fechaNacimiento: date("fechaNacimiento", { mode: "date" }).notNull(),
   telefono: varchar("telefono", { length: 50 }),
   estadoCivil: varchar("estadoCivil", { length: 50 }),
+  genero: varchar("genero", { length: 20 }),
   domicilio: text("domicilio"),
   barrio: varchar("barrio", { length: 100 }),
   localidad: varchar("localidad", { length: 100 }),
@@ -163,6 +164,11 @@ export const adultosMayores = pgTable("adultosMayores", {
   sugerencia: text("sugerencia"),
 
   activo: boolean("activo").default(true).notNull(),
+  fechaBaja: timestamp("fechaBaja"),
+  motivoBaja: varchar("motivoBaja", { length: 30 }), // "fallecimiento" | "fraude" | "otro"
+  motivoBajaDetalle: text("motivoBajaDetalle"), // se completa cuando motivoBaja = "otro"
+  fechaFallecimiento: date("fechaFallecimiento", { mode: "date" }),
+  actaDefuncion: text("actaDefuncion"), // archivo adjunto codificado en base64 (data URI)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
 });
@@ -240,6 +246,26 @@ export const derivaciones = pgTable("derivaciones", {
 
 export type Derivacion = typeof derivaciones.$inferSelect;
 export type InsertDerivacion = typeof derivaciones.$inferInsert;
+
+/**
+ * Auditoría: registro de movimientos de los usuarios (accesos y cambios).
+ * No usa claves foráneas a propósito: el historial se conserva aunque se borre el usuario o el registro afectado.
+ */
+export const auditoria = pgTable("auditoria", {
+  id: serial("id").primaryKey(),
+  userId: varchar("userId", { length: 20 }),
+  userNombre: varchar("userNombre", { length: 320 }),
+  userRole: varchar("userRole", { length: 20 }),
+  accion: varchar("accion", { length: 30 }).notNull(), // login, login_fallido, logout, crear, editar, eliminar, baja, otro
+  modulo: varchar("modulo", { length: 50 }),
+  entidadId: varchar("entidadId", { length: 50 }),
+  detalle: text("detalle"),
+  ip: varchar("ip", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Auditoria = typeof auditoria.$inferSelect;
+export type InsertAuditoria = typeof auditoria.$inferInsert;
 
 /**
  * Historial de ampliaciones de legajo

@@ -2,6 +2,7 @@ import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
+import { auditarMutacion } from "./audit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -20,7 +21,21 @@ const requireUser = t.middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, user: ctx.user } });
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+// Registra en la auditoría toda modificación (crear/editar/eliminar/baja) hecha por un usuario logueado.
+const auditarCambios = t.middleware(async ({ ctx, next, type, path, getRawInput }) => {
+  const result = await next();
+  if (type === "mutation" && result.ok) {
+    try {
+      const input = await getRawInput();
+      await auditarMutacion({ ctx, path, input });
+    } catch (error) {
+      console.error("[Auditoría] Error al registrar:", error);
+    }
+  }
+  return result;
+});
+
+export const protectedProcedure = t.procedure.use(requireUser).use(auditarCambios);
 
 export const adminProcedure = t.procedure.use(
   t.middleware(async ({ ctx, next }) => {

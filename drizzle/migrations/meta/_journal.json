@@ -8,6 +8,27 @@
       "when": 1786575176427,
       "tag": "0000_shiny_thor_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789607931730,
+      "tag": "0001_typical_mojo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789648379790,
+      "tag": "0002_lumpy_white_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794350722667,
+      "tag": "0003_absent_madame_masque",
+      "breakpoints": true
     }
   ]
 }

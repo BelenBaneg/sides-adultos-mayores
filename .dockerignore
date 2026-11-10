@@ -1,0 +1,12 @@
+node_modules
+.pnpm-store
+dist
+build
+.git
+.vscode
+.idea
+.env
+.env.*
+*.log
+Dockerfile
+docker-compose.yml

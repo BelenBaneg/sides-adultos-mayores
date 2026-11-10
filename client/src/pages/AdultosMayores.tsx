@@ -22,7 +22,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Users, Plus, Edit, FileText, Trash, Pencil, Search, Printer } from "lucide-react";
+import { Users, Plus, Edit, FileText, Trash, Pencil, Search, Printer, UserX, Upload, Paperclip } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -39,6 +39,7 @@ type AdultoMayorForm = {
   fechaNacimiento: string;
   telefono: string;
   estadoCivil: string;
+  genero: string;
   domicilio: string;
   barrio: string;
   localidad: string;
@@ -77,7 +78,7 @@ type AdultoMayorForm = {
 
 const initialForm: AdultoMayorForm = {
   expediente: "", trabajadorSocial: "", fechaFicha: new Date().toISOString().split('T')[0],
-  nombre: "", apellido: "", dni: "", fechaNacimiento: "", telefono: "", estadoCivil: "Soltera/o", domicilio: "", barrio: "", localidad: "",
+  nombre: "", apellido: "", dni: "", fechaNacimiento: "", telefono: "", estadoCivil: "Soltera/o", genero: "", domicilio: "", barrio: "", localidad: "",
   ocupacion: "", oficio: "", monto: "", beneficioSocial: "NO", cualBeneficio: "", asistenciaPrevisional: "No", diaCobro: "", medioCobro: "", tarjetas: "", prestamos: "",
   redFamiliar: [],
   tenenciaVivienda: "", tipoVivienda: "", situacionHabitacionalPersonas: "", situacionHabitacionalHabitaciones: "", materialParedes: "", materialPisos: "", materialTechos: "", bano: "", cocina: "", servicioLuz: false, servicioAgua: false, servicioGas: false,
@@ -99,6 +100,15 @@ export default function AdultosMayores() {
   const [ampliacion, setAmpliacion] = useState(initialAmpliacion);
   const [busqueda, setBusqueda] = useState("");
 
+  const [openBaja, setOpenBaja] = useState(false);
+  const [bajaForm, setBajaForm] = useState({
+    motivoBaja: "",
+    motivoBajaDetalle: "",
+    fechaFallecimiento: "",
+    actaDefuncionNombre: "",
+    actaDefuncion: "", // base64 (data URI)
+  });
+
   const { data: adultosMayores, isLoading } = trpc.adultosMayores.list.useQuery();
   const utils = trpc.useUtils();
 
@@ -118,10 +128,24 @@ export default function AdultosMayores() {
     onError: (error) => { toast.error(error.message || "Error al actualizar la ficha"); },
   });
 
-  // ======= MUTACIÓN PARA ELIMINAR FICHA PRINCIPAL COMPLETA =======
+  // ======= MUTACIÓN PARA ELIMINAR FICHA PRINCIPAL COMPLETA (borrado permanente) =======
   const deleteMutation = trpc.adultosMayores.delete.useMutation({
-    onSuccess: () => { toast.success("Ficha Social eliminada correctamente"); utils.adultosMayores.list.invalidate(); setOpen(false); setEditingId(null); setViewMode(false); },
+    onSuccess: () => { toast.success("Ficha Social eliminada por completo"); utils.adultosMayores.list.invalidate(); setOpen(false); setEditingId(null); setViewMode(false); },
     onError: (error) => { toast.error(error.message || "Error al eliminar la ficha"); },
+  });
+
+  // ======= MUTACIÓN PARA DAR DE BAJA (queda inactivo, conserva el historial) =======
+  const darDeBajaMutation = trpc.adultosMayores.darDeBaja.useMutation({
+    onSuccess: () => {
+      toast.success("Ficha dada de baja correctamente");
+      utils.adultosMayores.list.invalidate();
+      setOpenBaja(false);
+      setOpen(false);
+      setEditingId(null);
+      setViewMode(false);
+      setBajaForm({ motivoBaja: "", motivoBajaDetalle: "", fechaFallecimiento: "", actaDefuncionNombre: "", actaDefuncion: "" });
+    },
+    onError: (error) => { toast.error(error.message || "Error al dar de baja la ficha"); },
   });
 
   const createAmpliacionMutation = trpc.ampliaciones.create.useMutation({
@@ -170,6 +194,7 @@ export default function AdultosMayores() {
       fechaNacimiento: new Date(form.fechaNacimiento),
       telefono: form.telefono || "",
       estadoCivil: form.estadoCivil || "Soltera/o",
+      genero: form.genero || "",
       domicilio: form.domicilio || "",
       barrio: form.barrio || "",
       localidad: form.localidad || "",
@@ -252,9 +277,48 @@ export default function AdultosMayores() {
 
   const handleEliminarFichaPrincipal = () => {
     if (!editingId) return;
-    if (confirm("🚨 ¿Está seguro de que desea eliminar por completo esta Ficha Social? Esta acción dará de baja el registro primario.")) {
+    if (
+      confirm(
+        "🚨 ¿Eliminar esta Ficha Social POR COMPLETO?\n\nEsta acción es irreversible: se borra la ficha y todos sus seguimientos, alertas y derivaciones asociados, sin posibilidad de recuperarlos.\n\nSi la persona dejó el programa (falleció, fue dada de baja del sistema, etc.), usá el botón 'Dar de Baja' en su lugar para conservar su historial."
+      )
+    ) {
       deleteMutation.mutate({ id: editingId });
     }
+  };
+
+  const handleFileToBase64 = (file: File, onDone: (dataUrl: string) => void) => {
+    const reader = new FileReader();
+    reader.onload = () => onDone(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const abrirModalBaja = () => {
+    setBajaForm({ motivoBaja: "", motivoBajaDetalle: "", fechaFallecimiento: "", actaDefuncionNombre: "", actaDefuncion: "" });
+    setOpenBaja(true);
+  };
+
+  const handleConfirmarBaja = () => {
+    if (!editingId) return;
+    if (!bajaForm.motivoBaja) {
+      toast.error("Elegí un motivo de baja");
+      return;
+    }
+    if (bajaForm.motivoBaja === "otro" && !bajaForm.motivoBajaDetalle.trim()) {
+      toast.error("Especificá el motivo");
+      return;
+    }
+    if (bajaForm.motivoBaja === "fallecimiento" && !bajaForm.fechaFallecimiento) {
+      toast.error("Ingresá la fecha de fallecimiento");
+      return;
+    }
+
+    darDeBajaMutation.mutate({
+      id: editingId,
+      motivoBaja: bajaForm.motivoBaja as "fallecimiento" | "fraude" | "otro",
+      motivoBajaDetalle: bajaForm.motivoBaja === "otro" ? bajaForm.motivoBajaDetalle : "",
+      fechaFallecimiento: bajaForm.motivoBaja === "fallecimiento" && bajaForm.fechaFallecimiento ? new Date(bajaForm.fechaFallecimiento) : undefined,
+      actaDefuncion: bajaForm.motivoBaja === "fallecimiento" ? bajaForm.actaDefuncion || "" : "",
+    });
   };
 
   const handleEliminarAmpliacion = (id: number) => {
@@ -385,8 +449,10 @@ export default function AdultosMayores() {
         <table class="datos">
           <tr><td class="label">Nombres</td><td class="label">Apellidos</td><td class="label">DNI</td><td class="label">Fecha de Nacimiento</td></tr>
           <tr class="valores"><td>${v(form.nombre)}</td><td>${v(form.apellido)}</td><td>${v(form.dni)}</td><td>${formatFecha(form.fechaNacimiento)}</td></tr>
-          <tr><td class="label">Teléfono</td><td class="label">Estado Civil</td><td class="label">Barrio</td><td class="label">Localidad</td></tr>
-          <tr class="valores"><td>${v(form.telefono)}</td><td>${v(form.estadoCivil)}</td><td>${v(form.barrio)}</td><td>${v(form.localidad)}</td></tr>
+          <tr><td class="label">Teléfono</td><td class="label">Estado Civil</td><td class="label">Género</td><td class="label">Barrio</td></tr>
+          <tr class="valores"><td>${v(form.telefono)}</td><td>${v(form.estadoCivil)}</td><td>${v(form.genero)}</td><td>${v(form.barrio)}</td></tr>
+          <tr><td class="label" colspan="4">Localidad</td></tr>
+          <tr class="valores"><td colspan="4">${v(form.localidad)}</td></tr>
           <tr><td class="label" colspan="4">Domicilio</td></tr>
           <tr class="valores"><td colspan="4">${v(form.domicilio)}</td></tr>
           <tr><td class="label">Trabajador/a Social</td></tr>
@@ -519,6 +585,9 @@ export default function AdultosMayores() {
                         <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} onClick={() => { setAmpliacion(initialAmpliacion); setOpenAmpliacion(true); }}>
                           <Plus size={15} /> Nueva Ampliación de Sugerencia
                         </Button>
+                        <Button bg="orange.600" color="white" _hover={{ bg: "orange.700" }} onClick={abrirModalBaja}>
+                          <UserX size={15} /> Baja
+                        </Button>
                         <Button bg="red.600" color="white" _hover={{ bg: "red.700" }} onClick={handleEliminarFichaPrincipal}>
                           <Trash size={15} /> Eliminar Ficha
                         </Button>
@@ -534,6 +603,7 @@ export default function AdultosMayores() {
                           <DetailField label="Nacimiento" value={form.fechaNacimiento} />
                           <DetailField label="Teléfono" value={form.telefono} />
                           <DetailField label="Estado Civil" value={form.estadoCivil} />
+                          <DetailField label="Género" value={form.genero} />
                           <DetailField label="Domicilio" value={form.domicilio} />
                           <DetailField label="Barrio" value={form.barrio} />
                           <DetailField label="Localidad" value={form.localidad} />
@@ -685,7 +755,7 @@ export default function AdultosMayores() {
                                 <Input value={form.dni} onChange={e => setForm({ ...form, dni: e.target.value })} required />
                               </Field.Root>
                             </Grid>
-                            <Grid templateColumns={{ base: "1fr", md: "1fr 1fr 1fr" }} gap={4}>
+                            <Grid templateColumns={{ base: "1fr", md: "1fr 1fr 1fr 1fr" }} gap={4}>
                               <Field.Root required>
                                 <Field.Label>Fecha de Nacimiento</Field.Label>
                                 <Input type="date" value={form.fechaNacimiento} onChange={e => setForm({ ...form, fechaNacimiento: e.target.value })} required />
@@ -703,6 +773,18 @@ export default function AdultosMayores() {
                                     <option value="Separada/o">Separada/o</option>
                                     <option value="Viuda/o">Viuda/o</option>
                                     <option value="Unión de Hecho">Unión de Hecho</option>
+                                  </NativeSelect.Field>
+                                  <NativeSelect.Indicator />
+                                </NativeSelect.Root>
+                              </Field.Root>
+                              <Field.Root>
+                                <Field.Label>Género</Field.Label>
+                                <NativeSelect.Root>
+                                  <NativeSelect.Field value={form.genero} onChange={e => setForm({ ...form, genero: e.target.value })}>
+                                    <option value="">Sin especificar</option>
+                                    <option value="Femenino">Femenino</option>
+                                    <option value="Masculino">Masculino</option>
+                                    <option value="Otro">Otro</option>
                                   </NativeSelect.Field>
                                   <NativeSelect.Indicator />
                                 </NativeSelect.Root>
@@ -1037,6 +1119,111 @@ export default function AdultosMayores() {
             </Card.Root>
           )}
       </Box>
+
+      {/* ================= MODAL DE BAJA ================= */}
+      <Dialog.Root open={openBaja} onOpenChange={d => setOpenBaja(d.open)} size="md">
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content>
+              <Dialog.Header borderBottomWidth="1px" borderColor="gray.200">
+                <Dialog.Title display="flex" alignItems="center" gap={2}>
+                  <UserX size={18} color="var(--chakra-colors-orange-600)" />
+                  Dar de Baja
+                </Dialog.Title>
+                <Dialog.CloseTrigger asChild>
+                  <IconButton aria-label="Cerrar" variant="ghost" size="sm" />
+                </Dialog.CloseTrigger>
+              </Dialog.Header>
+              <Dialog.Body py={5}>
+                <VStack align="stretch" gap={4}>
+                  <Text fontSize="sm" color="gray.500">
+                    La ficha quedará inactiva y no aparecerá más en los listados, pero conserva todo su historial (seguimientos, alertas, derivaciones).
+                  </Text>
+
+                  <Field.Root required>
+                    <Field.Label>Motivo</Field.Label>
+                    <NativeSelect.Root>
+                      <NativeSelect.Field
+                        value={bajaForm.motivoBaja}
+                        onChange={e => setBajaForm({ ...bajaForm, motivoBaja: e.target.value })}
+                      >
+                        <option value="">Seleccionar...</option>
+                        <option value="fallecimiento">Fallecimiento</option>
+                        <option value="fraude">Fraude</option>
+                        <option value="otro">Otro</option>
+                      </NativeSelect.Field>
+                      <NativeSelect.Indicator />
+                    </NativeSelect.Root>
+                  </Field.Root>
+
+                  {bajaForm.motivoBaja === "otro" && (
+                    <Field.Root required>
+                      <Field.Label>Especificar</Field.Label>
+                      <Textarea
+                        value={bajaForm.motivoBajaDetalle}
+                        onChange={e => setBajaForm({ ...bajaForm, motivoBajaDetalle: e.target.value })}
+                        rows={3}
+                        placeholder="Detallá el motivo de la baja"
+                      />
+                    </Field.Root>
+                  )}
+
+                  {bajaForm.motivoBaja === "fallecimiento" && (
+                    <>
+                      <Field.Root required>
+                        <Field.Label>Fecha de Fallecimiento</Field.Label>
+                        <Input
+                          type="date"
+                          value={bajaForm.fechaFallecimiento}
+                          onChange={e => setBajaForm({ ...bajaForm, fechaFallecimiento: e.target.value })}
+                        />
+                      </Field.Root>
+
+                      <Field.Root>
+                        <Field.Label display="flex" alignItems="center" gap={1.5}>
+                          <Paperclip size={14} /> Acta de Defunción
+                        </Field.Label>
+                        <Input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          p={1}
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            handleFileToBase64(file, dataUrl =>
+                              setBajaForm(prev => ({ ...prev, actaDefuncion: dataUrl, actaDefuncionNombre: file.name }))
+                            );
+                          }}
+                        />
+                        {bajaForm.actaDefuncionNombre && (
+                          <Text fontSize="xs" color="green.600" mt={1} display="flex" alignItems="center" gap={1}>
+                            <Upload size={12} /> {bajaForm.actaDefuncionNombre} cargado
+                          </Text>
+                        )}
+                      </Field.Root>
+                    </>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer borderTopWidth="1px" borderColor="gray.200" gap={2}>
+                <Button variant="outline" onClick={() => setOpenBaja(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  bg="orange.600"
+                  color="white"
+                  _hover={{ bg: "orange.700" }}
+                  onClick={handleConfirmarBaja}
+                  loading={darDeBajaMutation.isPending}
+                >
+                  <UserX size={15} /> Confirmar Baja
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       {/* ================= MODAL DE AMPLIACIÓN DE SUGERENCIA ================= */}
       <Dialog.Root open={openAmpliacion} onOpenChange={d => setOpenAmpliacion(d.open)} size="full" scrollBehavior="inside">

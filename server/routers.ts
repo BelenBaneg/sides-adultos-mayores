@@ -6,10 +6,26 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { sdk } from "./_core/sdk";
 import { verifyPassword, hashPassword } from "./_core/crypto";
 import { TRPCError } from "@trpc/server";
+import { obtenerIp } from "./_core/audit";
 import * as db from "./db";
 
 export const appRouter = router({
   system: systemRouter,
+
+  // Solo la superadmin puede consultar la auditoría.
+  auditoria: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(2000).default(500) }).optional())
+      .query(async ({ input, ctx }) => {
+        if (ctx.user.role !== "superadmin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Operación denegada: Solo la Superadmin puede ver la auditoría.",
+          });
+        }
+        return await db.listarAuditoria(input?.limit ?? 500);
+      }),
+  }),
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
@@ -23,7 +39,14 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         const user = await db.getUserByEmail(input.email);
+        const ip = obtenerIp(ctx.req);
         if (!user) {
+          await db.registrarAuditoria({
+            accion: "login_fallido",
+            modulo: "auth",
+            detalle: JSON.stringify({ email: input.email, motivo: "usuario inexistente" }),
+            ip,
+          });
           throw new TRPCError({
             code: "UNAUTHORIZED",
             message: "El correo electrónico o la contraseña son incorrectos.",
@@ -41,6 +64,15 @@ export const appRouter = router({
         }
 
         if (!isPasswordValid) {
+          await db.registrarAuditoria({
+            userId: user.id,
+            userNombre: `${user.nombre} ${user.apellido}`.trim(),
+            userRole: user.role,
+            accion: "login_fallido",
+            modulo: "auth",
+            detalle: JSON.stringify({ email: input.email, motivo: "contraseña incorrecta" }),
+            ip,
+          });
           throw new TRPCError({
             code: "UNAUTHORIZED",
             message: "El correo electrónico o la contraseña son incorrectos.",
@@ -58,10 +90,30 @@ export const appRouter = router({
           sameSite: "lax",
         });
 
+        await db.registrarAuditoria({
+          userId: user.id,
+          userNombre: `${user.nombre} ${user.apellido}`.trim(),
+          userRole: user.role,
+          accion: "login",
+          modulo: "auth",
+          detalle: JSON.stringify({ email: user.email }),
+          ip,
+        });
+
         return user;
       }),
 
-    logout: publicProcedure.mutation(({ ctx }) => {
+    logout: publicProcedure.mutation(async ({ ctx }) => {
+      if (ctx.user) {
+        await db.registrarAuditoria({
+          userId: ctx.user.id,
+          userNombre: `${ctx.user.nombre} ${ctx.user.apellido}`.trim(),
+          userRole: ctx.user.role,
+          accion: "logout",
+          modulo: "auth",
+          ip: obtenerIp(ctx.req),
+        });
+      }
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, cookieOptions);
       return { success: true } as const;
@@ -260,6 +312,7 @@ export const appRouter = router({
           fechaNacimiento: z.date(),
           telefono: z.string().nullish(),
           estadoCivil: z.string().nullish(),
+          genero: z.string().nullish(),
           domicilio: z.string().nullish(),
           barrio: z.string().nullish(),
           localidad: z.string().nullish(),
@@ -308,6 +361,7 @@ export const appRouter = router({
           fechaNacimiento: z.date().optional(),
           telefono: z.string().nullish(),
           estadoCivil: z.string().nullish(),
+          genero: z.string().nullish(),
           domicilio: z.string().nullish(),
           barrio: z.string().nullish(),
           localidad: z.string().nullish(),
@@ -347,9 +401,31 @@ export const appRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
+        // Borrado permanente: elimina la ficha y todo lo relacionado (seguimientos, alertas, derivaciones, ampliaciones).
         await db.deleteAdultoMayor(input.id);
         return { success: true };
       }),
+    darDeBaja: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          motivoBaja: z.enum(["fallecimiento", "fraude", "otro"]),
+          motivoBajaDetalle: z.string().nullish(),
+          fechaFallecimiento: z.date().nullish(),
+          actaDefuncion: z.string().nullish(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { id, ...datos } = input;
+        return await db.darDeBajaAdultoMayor(id, datos);
+      }),
+  }),
+
+  estadisticas: router({
+    // Devuelve todas las fichas (activas y dadas de baja) para calcular los indicadores en el cliente.
+    data: protectedProcedure.query(async () => {
+      return await db.getTodosAdultosMayores();
+    }),
   }),
 
   dashboard: router({

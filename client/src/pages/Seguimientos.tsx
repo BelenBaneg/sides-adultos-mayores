@@ -22,7 +22,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { History, Plus, Edit, FileText, Trash, ClipboardList, Search } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type SeguimientoForm = {
@@ -69,9 +69,24 @@ export default function Seguimientos() {
   const [filterTipo, setFilterTipo] = useState<string>("todos");
   const [filterAdulto, setFilterAdulto] = useState<string>("");
 
+  const [busquedaAsignacion, setBusquedaAsignacion] = useState("");
+  const [mostrarSugerenciasAsignacion, setMostrarSugerenciasAsignacion] = useState(false);
+
   const { data: seguimientos, isLoading } = trpc.seguimientos.list.useQuery();
   const { data: adultosMayores } = trpc.adultosMayores.list.useQuery();
   const utils = trpc.useUtils();
+
+  const sugerenciasAsignacion = useMemo(() => {
+    const q = busquedaAsignacion.trim().toLowerCase();
+    if (!q) return [];
+    return (adultosMayores ?? [])
+      .filter((am: any) => {
+        const nombreCompleto = `${am.nombre ?? ""} ${am.apellido ?? ""}`.toLowerCase();
+        const dni = (am.dni ?? "").toLowerCase();
+        return nombreCompleto.includes(q) || dni.includes(q);
+      })
+      .slice(0, 8);
+  }, [adultosMayores, busquedaAsignacion]);
 
   const createMutation = trpc.seguimientos.create.useMutation({
     onSuccess: () => {
@@ -117,6 +132,9 @@ export default function Seguimientos() {
       observaciones: seguimiento.observaciones || "",
       responsable: seguimiento.responsable || "",
     });
+    const am = adultosMayores?.find((a: any) => a.id === seguimiento.adultoMayorId);
+    setBusquedaAsignacion(am ? `${am.nombre} ${am.apellido}` : "");
+    setMostrarSugerenciasAsignacion(false);
     setViewMode(true);
     setOpen(true);
   };
@@ -193,6 +211,8 @@ export default function Seguimientos() {
             setForm(initialForm);
             setEditingId(null);
             setViewMode(false);
+            setBusquedaAsignacion("");
+            setMostrarSugerenciasAsignacion(false);
           }
         }}
         size="full"
@@ -280,20 +300,59 @@ export default function Seguimientos() {
                         <SimpleGrid columns={{ base: 1, md: 2 }} gap={6}>
                           <Field.Root required>
                             <Field.Label fontWeight="600">Adulto Mayor</Field.Label>
-                            <NativeSelect.Root size="lg">
-                              <NativeSelect.Field
-                                value={form.adultoMayorId?.toString() || ""}
-                                onChange={e => setForm({ ...form, adultoMayorId: e.target.value ? Number(e.target.value) : undefined })}
-                              >
-                                <option value="">Seleccione un adulto mayor</option>
-                                {adultosMayores?.map((am: any) => (
-                                  <option key={am.id} value={am.id.toString()}>
-                                    {am.nombre} {am.apellido} (DNI: {am.dni})
-                                  </option>
-                                ))}
-                              </NativeSelect.Field>
-                              <NativeSelect.Indicator />
-                            </NativeSelect.Root>
+                            <Box position="relative" w="full">
+                              <Input
+                                size="lg"
+                                pl={9}
+                                placeholder="Buscar por nombre o DNI..."
+                                value={busquedaAsignacion}
+                                onChange={e => {
+                                  setBusquedaAsignacion(e.target.value);
+                                  setForm({ ...form, adultoMayorId: undefined });
+                                  setMostrarSugerenciasAsignacion(true);
+                                }}
+                                onFocus={() => setMostrarSugerenciasAsignacion(true)}
+                                onBlur={() => setTimeout(() => setMostrarSugerenciasAsignacion(false), 150)}
+                                autoComplete="off"
+                              />
+                              <Box position="absolute" left={3} top="50%" transform="translateY(-50%)" color="gray.400" pointerEvents="none">
+                                <Search size={16} />
+                              </Box>
+
+                              {mostrarSugerenciasAsignacion && busquedaAsignacion.trim() && (
+                                <Card.Root position="absolute" top="calc(100% + 4px)" left={0} right={0} zIndex={20} maxH="240px" overflowY="auto" boxShadow="lg">
+                                  <Card.Body p={1}>
+                                    {sugerenciasAsignacion.length > 0 ? (
+                                      <VStack align="stretch" gap={0}>
+                                        {sugerenciasAsignacion.map((am: any) => (
+                                          <Box
+                                            key={am.id}
+                                            px={3}
+                                            py={2}
+                                            borderRadius="md"
+                                            cursor="pointer"
+                                            _hover={{ bg: "bg.muted" }}
+                                            onMouseDown={e => {
+                                              e.preventDefault();
+                                              setForm({ ...form, adultoMayorId: am.id });
+                                              setBusquedaAsignacion(`${am.nombre} ${am.apellido}`);
+                                              setMostrarSugerenciasAsignacion(false);
+                                            }}
+                                          >
+                                            <Text fontWeight="600" fontSize="sm">{am.nombre} {am.apellido}</Text>
+                                            <Text fontSize="xs" color="gray.500">DNI: {am.dni}</Text>
+                                          </Box>
+                                        ))}
+                                      </VStack>
+                                    ) : (
+                                      <Text px={3} py={2} fontSize="sm" color="gray.500">
+                                        Sin resultados para "{busquedaAsignacion}"
+                                      </Text>
+                                    )}
+                                  </Card.Body>
+                                </Card.Root>
+                              )}
+                            </Box>
                           </Field.Root>
                           <Field.Root>
                             <Field.Label fontWeight="600">Responsable</Field.Label>

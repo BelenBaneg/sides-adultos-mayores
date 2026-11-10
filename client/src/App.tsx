@@ -16,6 +16,9 @@ import Seguimientos from "./pages/Seguimientos";
 import VisitasReportes from "./pages/VisitasReportes";
 import Home from "./pages/Home";
 import Usuarios from "./pages/Usuarios";
+import Estadisticas from "./pages/Estadisticas";
+import PortalPublicaciones from "./pages/PortalPublicaciones";
+import Auditoria from "./pages/Auditoria";
 
 function Router() {
   return (
@@ -39,6 +42,24 @@ function Router() {
       <Route path="/adultos-mayores">
         <DashboardLayout>
           <AdultosMayores />
+        </DashboardLayout>
+      </Route>
+
+      <Route path="/portal-publicaciones">
+        <DashboardLayout>
+          <PortalPublicaciones />
+        </DashboardLayout>
+      </Route>
+
+      <Route path="/auditoria">
+        <DashboardLayout>
+          <Auditoria />
+        </DashboardLayout>
+      </Route>
+
+      <Route path="/estadisticas">
+        <DashboardLayout>
+          <Estadisticas />
         </DashboardLayout>
       </Route>
 

@@ -21,6 +21,8 @@ import {
   Derivacion,
   ampliaciones,
   InsertAmpliacion,
+  auditoria,
+  InsertAuditoria,
 } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -63,6 +65,25 @@ export async function createUser(
     })
     .returning();
   return inserted;
+}
+
+// ============ AUDITORÍA ============
+
+// Nunca debe romper la operación principal: si falla el registro, solo se informa por consola.
+export async function registrarAuditoria(data: InsertAuditoria): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.insert(auditoria).values(data);
+  } catch (error) {
+    console.error("[Auditoría] No se pudo registrar el movimiento:", error);
+  }
+}
+
+export async function listarAuditoria(limit = 500) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(auditoria).orderBy(desc(auditoria.createdAt)).limit(limit);
 }
 
 export async function getAllUsers() {
@@ -168,6 +189,14 @@ export async function getAllAdultosMayores(): Promise<AdultoMayor[]> {
   return await db.select().from(adultosMayores).where(eq(adultosMayores.activo, true)).orderBy(desc(adultosMayores.createdAt));
 }
 
+// Incluye también las fichas dadas de baja (activo = false). Se usa para Estadísticas.
+export async function getTodosAdultosMayores(): Promise<AdultoMayor[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db.select().from(adultosMayores).orderBy(desc(adultosMayores.createdAt));
+}
+
 export async function getAdultoMayorById(id: number): Promise<AdultoMayor | undefined> {
   const db = await getDb();
   if (!db) return undefined;
@@ -184,11 +213,43 @@ export async function updateAdultoMayor(id: number, data: Partial<InsertAdultoMa
   return await getAdultoMayorById(id);
 }
 
+// Elimina la ficha y TODO lo relacionado (seguimientos, alertas, derivaciones, ampliaciones). Es irreversible.
 export async function deleteAdultoMayor(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  await db.update(adultosMayores).set({ activo: false }).where(eq(adultosMayores.id, id));
+  await db.delete(ampliaciones).where(eq(ampliaciones.adultoMayorId, id));
+  await db.delete(seguimientos).where(eq(seguimientos.adultoMayorId, id));
+  await db.delete(alertas).where(eq(alertas.adultoMayorId, id));
+  await db.delete(derivaciones).where(eq(derivaciones.adultoMayorId, id));
+  await db.delete(adultosMayores).where(eq(adultosMayores.id, id));
+}
+
+export type DarDeBajaInput = {
+  motivoBaja: "fallecimiento" | "fraude" | "otro";
+  motivoBajaDetalle?: string | null;
+  fechaFallecimiento?: Date | null;
+  actaDefuncion?: string | null;
+};
+
+// Da de baja la ficha (queda inactiva pero se conserva el historial completo).
+export async function darDeBajaAdultoMayor(id: number, datos: DarDeBajaInput): Promise<AdultoMayor | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .update(adultosMayores)
+    .set({
+      activo: false,
+      fechaBaja: new Date(),
+      motivoBaja: datos.motivoBaja,
+      motivoBajaDetalle: datos.motivoBajaDetalle ?? null,
+      fechaFallecimiento: datos.fechaFallecimiento ?? null,
+      actaDefuncion: datos.actaDefuncion ?? null,
+    })
+    .where(eq(adultosMayores.id, id));
+
+  return await getAdultoMayorById(id);
 }
 
 // ============ HISTORIAL DE AMPLIACIONES ============

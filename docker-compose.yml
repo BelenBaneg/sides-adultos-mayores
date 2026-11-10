@@ -1,0 +1,37 @@
+# Levanta SIDES junto con su propia base PostgreSQL (sin depender de Neon).
+# Uso:  docker compose up -d --build
+# Luego abrir http://localhost:3000
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sides
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
+      POSTGRES_DB: sides
+    volumes:
+      - sides_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sides -d sides"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://sides:${DB_PASSWORD:-cambiar_esta_clave}@db:5432/sides
+      JWT_SECRET: ${JWT_SECRET:?Definí JWT_SECRET en el archivo .env}
+      VITE_APP_ID: sides_production
+
+volumes:
+  sides_pgdata:

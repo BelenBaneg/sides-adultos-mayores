@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import { toast } from "sonner";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 
 const menuItems = [
@@ -94,6 +95,28 @@ function LayoutShell({ children }: { children: React.ReactNode }) {
       sessionStorage.clear();
     }
   };
+
+  // Cierre de sesión automático por inactividad (30 minutos sin usar el sistema)
+  useEffect(() => {
+    const LIMITE_MS = 30 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const expirar = async () => {
+      toast.info("Tu sesión se cerró por inactividad.");
+      await handleLogout();
+    };
+    const reiniciar = () => {
+      clearTimeout(timer);
+      timer = setTimeout(expirar, LIMITE_MS);
+    };
+    const eventos = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
+    eventos.forEach(e => window.addEventListener(e, reiniciar, { passive: true }));
+    reiniciar();
+    return () => {
+      clearTimeout(timer);
+      eventos.forEach(e => window.removeEventListener(e, reiniciar));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sidebarWidth = collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
 

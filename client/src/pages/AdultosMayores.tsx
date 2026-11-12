@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import {
+  Badge,
   Box,
   Button,
   Card,
@@ -22,8 +23,9 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Users, Plus, Edit, FileText, Trash, Pencil, Search, Printer, UserX, Upload, Paperclip } from "lucide-react";
-import { useState } from "react";
+import { Users, Plus, Edit, FileText, Trash, Pencil, Search, Printer, UserX, Upload, Paperclip, FileCheck2, Eye, Download } from "lucide-react";
+import { useRef, useState } from "react";
+import VisorArchivo, { type ArchivoVisor } from "@/components/VisorArchivo";
 import { toast } from "sonner";
 
 type Familiar = { nombre: string; dni: string; vinculo: string; ocupacion: string; oficio: string; ingresos: string };
@@ -117,6 +119,107 @@ export default function AdultosMayores() {
     { adultoMayorId: editingId ?? 0 },
     { enabled: !!editingId }
   );
+
+  // ======= FICHA FIRMADA (PDF o foto escaneada) =======
+  const fichaInputRef = useRef<HTMLInputElement>(null);
+  const [archivoVisor, setArchivoVisor] = useState<ArchivoVisor | null>(null);
+  const { data: fichasMeta } = trpc.fichasFirmadas.listMeta.useQuery();
+  const idsConFichaFirmada = new Set((fichasMeta ?? []).map((f: any) => f.adultoMayorId));
+  const fichaFirmadaMeta = (fichasMeta ?? []).find((f: any) => f.adultoMayorId === editingId);
+
+  const subirFichaMutation = trpc.fichasFirmadas.upload.useMutation({
+    onSuccess: () => {
+      toast.success("Ficha firmada guardada");
+      utils.fichasFirmadas.listMeta.invalidate();
+    },
+    onError: (error) => { toast.error(error.message || "No se pudo guardar la ficha firmada"); },
+  });
+
+  const eliminarFichaFirmadaMutation = trpc.fichasFirmadas.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Ficha firmada eliminada");
+      utils.fichasFirmadas.listMeta.invalidate();
+    },
+    onError: (error) => { toast.error(error.message || "No se pudo eliminar la ficha firmada"); },
+  });
+
+  // Las fotos se reducen (máx. 1800 px) y se pasan a JPG para que no pesen tanto. Los PDF se suben tal cual.
+  const prepararArchivoFicha = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        if (file.type === "application/pdf") return resolve(dataUrl);
+        const img = new window.Image();
+        img.onerror = () => reject(new Error("No se pudo leer la imagen"));
+        img.onload = () => {
+          const escala = Math.min(1, 1800 / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * escala);
+          canvas.height = Math.round(img.height * escala);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return resolve(dataUrl);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+
+  const handleSeleccionarFichaFirmada = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !editingId) return;
+    if (!["application/pdf", "image/jpeg", "image/png"].includes(file.type)) {
+      toast.error("Solo se permiten archivos PDF, JPG o PNG");
+      return;
+    }
+    if (file.type === "application/pdf" && file.size > 8 * 1024 * 1024) {
+      toast.error("El PDF pesa más de 8 MB. Probá escanearlo con menor resolución.");
+      return;
+    }
+    try {
+      const archivo = await prepararArchivoFicha(file);
+      subirFichaMutation.mutate({ adultoMayorId: editingId, nombreArchivo: file.name, archivo });
+    } catch (err: any) {
+      toast.error(err.message || "No se pudo procesar el archivo");
+    }
+  };
+
+  const abrirFichaFirmada = async (descargar: boolean) => {
+    if (!editingId) return;
+    try {
+      const ficha = await utils.fichasFirmadas.get.fetch({ adultoMayorId: editingId });
+      if (!ficha) { toast.error("No hay ficha firmada cargada"); return; }
+      if (descargar) {
+        // Los data URI no se pueden bajar directo: se convierten a un blob temporal.
+        const blob = await (await fetch(ficha.archivo)).blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = ficha.nombreArchivo;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } else {
+        setArchivoVisor({ nombre: ficha.nombreArchivo, dataUri: ficha.archivo });
+      }
+    } catch {
+      toast.error("No se pudo abrir la ficha firmada");
+    }
+  };
+
+  const handleEliminarFichaFirmada = () => {
+    if (!editingId) return;
+    if (confirm("¿Eliminar la ficha firmada cargada? Podés volver a subir otra.")) {
+      eliminarFichaFirmadaMutation.mutate({ adultoMayorId: editingId });
+    }
+  };
 
   const createMutation = trpc.adultosMayores.create.useMutation({
     onSuccess: () => { toast.success("Ficha Social creada"); utils.adultosMayores.list.invalidate(); setOpen(false); setForm(initialForm); },
@@ -591,6 +694,73 @@ export default function AdultosMayores() {
                         <Button bg="red.600" color="white" _hover={{ bg: "red.700" }} onClick={handleEliminarFichaPrincipal}>
                           <Trash size={15} /> Eliminar Ficha
                         </Button>
+                      </HStack>
+                    </Flex>
+
+                    {/* Ficha firmada (escaneo o foto de la ficha impresa y firmada) */}
+                    <Flex
+                      justify="space-between"
+                      align={{ base: "flex-start", md: "center" }}
+                      direction={{ base: "column", md: "row" }}
+                      gap={3}
+                      p={4}
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor={fichaFirmadaMeta ? { base: "green.200", _dark: "green.800" } : { base: "orange.200", _dark: "orange.800" }}
+                      bg={fichaFirmadaMeta ? { base: "green.50", _dark: "green.950" } : { base: "orange.50", _dark: "orange.950" }}
+                    >
+                      <HStack gap={3}>
+                        <FileCheck2 size={22} color={fichaFirmadaMeta ? "var(--chakra-colors-green-600)" : "var(--chakra-colors-orange-500)"} />
+                        <Box>
+                          <Text fontWeight="700" fontSize="sm" color="fg">
+                            {fichaFirmadaMeta ? "Ficha firmada cargada" : "Ficha firmada pendiente"}
+                          </Text>
+                          <Text fontSize="xs" color="gray.500">
+                            {fichaFirmadaMeta
+                              ? `${fichaFirmadaMeta.nombreArchivo} · subida el ${new Date(fichaFirmadaMeta.createdAt).toLocaleDateString("es-AR")}${fichaFirmadaMeta.subidoPorNombre ? ` por ${fichaFirmadaMeta.subidoPorNombre}` : ""}`
+                              : "Imprimí la ficha, hacela firmar y subí el escaneo (PDF) o una foto."}
+                          </Text>
+                        </Box>
+                      </HStack>
+                      <HStack gap={2} flexWrap="wrap">
+                        <input
+                          ref={fichaInputRef}
+                          type="file"
+                          accept="application/pdf,image/jpeg,image/png"
+                          style={{ display: "none" }}
+                          onChange={handleSeleccionarFichaFirmada}
+                        />
+                        {fichaFirmadaMeta && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => abrirFichaFirmada(false)}>
+                              <Eye size={14} /> Ver
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => abrirFichaFirmada(true)}>
+                              <Download size={14} /> Descargar
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          size="sm"
+                          bg="brand.600"
+                          color="white"
+                          _hover={{ bg: "brand.700" }}
+                          loading={subirFichaMutation.isPending}
+                          onClick={() => fichaInputRef.current?.click()}
+                        >
+                          <Upload size={14} /> {fichaFirmadaMeta ? "Reemplazar" : "Subir ficha firmada"}
+                        </Button>
+                        {fichaFirmadaMeta && (
+                          <IconButton
+                            aria-label="Eliminar ficha firmada"
+                            size="sm"
+                            variant="ghost"
+                            color="red.600"
+                            onClick={handleEliminarFichaFirmada}
+                          >
+                            <Trash size={15} />
+                          </IconButton>
+                        )}
                       </HStack>
                     </Flex>
 
@@ -1070,6 +1240,7 @@ export default function AdultosMayores() {
                       <Table.ColumnHeader>Edad</Table.ColumnHeader>
                       <Table.ColumnHeader>Teléfono</Table.ColumnHeader>
                       <Table.ColumnHeader>Barrio</Table.ColumnHeader>
+                      <Table.ColumnHeader>Ficha firmada</Table.ColumnHeader>
                       <Table.ColumnHeader textAlign="right">Acciones</Table.ColumnHeader>
                     </Table.Row>
                   </Table.Header>
@@ -1082,6 +1253,13 @@ export default function AdultosMayores() {
                         <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">{calcularEdad(adulto.fechaNacimiento)}</Table.Cell>
                         <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">{adulto.telefono || "S/D"}</Table.Cell>
                         <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">{adulto.barrio || "S/D"}</Table.Cell>
+                        <Table.Cell>
+                          {idsConFichaFirmada.has(adulto.id) ? (
+                            <Badge bg="green.600" color="white">Firmada</Badge>
+                          ) : (
+                            <Badge bg="orange.500" color="white">Pendiente</Badge>
+                          )}
+                        </Table.Cell>
                         <Table.Cell textAlign="right">
                           <IconButton aria-label="Ver / Editar" variant="ghost" size="sm" onClick={() => handleEdit(adulto)}>
                             <FileText size={16} color="var(--chakra-colors-brand-600)" />
@@ -1121,6 +1299,8 @@ export default function AdultosMayores() {
       </Box>
 
       {/* ================= MODAL DE BAJA ================= */}
+      <VisorArchivo archivo={archivoVisor} onClose={() => setArchivoVisor(null)} />
+
       <Dialog.Root open={openBaja} onOpenChange={d => setOpenBaja(d.open)} size="md">
         <Portal>
           <Dialog.Backdrop />

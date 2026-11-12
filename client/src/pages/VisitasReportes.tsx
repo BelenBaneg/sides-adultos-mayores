@@ -17,95 +17,159 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { FileText, Download, Filter, FileSpreadsheet, FileType } from "lucide-react";
+import { FileText, Download, Filter, FileSpreadsheet, FileType, Search, X } from "lucide-react";
 import { useState, useMemo } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+const TIPOS_SEGUIMIENTO = [
+  { value: "visita", label: "Visita" },
+  { value: "reporte_vulnerabilidad", label: "Reporte de Vulnerabilidad" },
+  { value: "control_medico", label: "Control Médico" },
+  { value: "entrevista_social", label: "Entrevista Social" },
+  { value: "otro", label: "Otro" },
+];
+
+const TIPOS_ALERTA = [
+  { value: "falta_medicacion", label: "Falta de medicación" },
+  { value: "salud_critica", label: "Salud crítica" },
+  { value: "abandono", label: "Abandono" },
+  { value: "abuso_economico", label: "Abuso económico" },
+  { value: "abuso_psicologico", label: "Abuso psicológico" },
+  { value: "abuso_fisico", label: "Abuso físico" },
+  { value: "otro", label: "Otro" },
+];
+
+const ESTADOS_ALERTA: Record<string, string> = {
+  pendiente: "Pendiente",
+  en_atencion: "En atención",
+  resuelta: "Resuelta",
+};
+
+const tipoPalette: Record<string, string> = {
+  visita: "blue.500",
+  reporte_vulnerabilidad: "red.500",
+  control_medico: "green.500",
+  entrevista_social: "purple.500",
+  otro: "gray.500",
+};
+
+const labelSeguimiento = (tipo: string) => TIPOS_SEGUIMIENTO.find(t => t.value === tipo)?.label ?? tipo;
+const labelAlerta = (tipo: string) => TIPOS_ALERTA.find(t => t.value === tipo)?.label ?? tipo;
+
+type Registro = {
+  key: string;
+  origen: "seguimiento" | "alerta";
+  tipoValue: string;
+  tipoLabel: string;
+  color: string;
+  fecha: any;
+  adultoMayorId: number;
+  descripcion: string;
+  responsable: string;
+  observaciones: string;
+  estado: string;
+};
+
 export default function VisitasReportes() {
+  const [filtroOrigen, setFiltroOrigen] = useState<string>("todos");
   const [filtroTipo, setFiltroTipo] = useState<string>("todos");
-  const [filtroAdultoMayor, setFiltroAdultoMayor] = useState<string>("todos");
+  const [filtroEstadoAlerta, setFiltroEstadoAlerta] = useState<string>("todos");
   const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>("");
   const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>("");
 
-  const { data: seguimientos, isLoading } = trpc.seguimientos.list.useQuery();
+  // Búsqueda dinámica de Adulto Mayor (nombre o DNI)
+  const [busquedaAM, setBusquedaAM] = useState("");
+  const [adultoSeleccionado, setAdultoSeleccionado] = useState<number | null>(null);
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+
+  const { data: seguimientos, isLoading: cargandoSeg } = trpc.seguimientos.list.useQuery();
+  const { data: alertas, isLoading: cargandoAlertas } = trpc.alertas.list.useQuery();
   const { data: adultosMayores } = trpc.adultosMayores.list.useQuery();
+  const isLoading = cargandoSeg || cargandoAlertas;
 
-  const tiposSegumiento = [
-    { value: "visita", label: "Visita" },
-    { value: "reporte_vulnerabilidad", label: "Reporte de Vulnerabilidad" },
-    { value: "control_medico", label: "Control Médico" },
-    { value: "entrevista_social", label: "Entrevista Social" },
-    { value: "otro", label: "Otro" },
-  ];
+  const sugerencias = useMemo(() => {
+    const q = busquedaAM.trim().toLowerCase();
+    if (!q) return [];
+    return (adultosMayores ?? [])
+      .filter((am: any) => {
+        const nombreCompleto = `${am.nombre ?? ""} ${am.apellido ?? ""}`.toLowerCase();
+        const dni = (am.dni ?? "").toString().toLowerCase();
+        return nombreCompleto.includes(q) || dni.includes(q);
+      })
+      .slice(0, 8);
+  }, [adultosMayores, busquedaAM]);
 
-  const tipoPalette: Record<string, string> = {
-    visita: "blue.500",
-    reporte_vulnerabilidad: "red.500",
-    control_medico: "green.500",
-    entrevista_social: "purple.500",
-    otro: "gray.500",
+  // Unifica seguimientos y alertas en un mismo listado
+  const registros = useMemo<Registro[]>(() => {
+    const segs: Registro[] = (seguimientos ?? []).map((s: any) => ({
+      key: `s-${s.id}`,
+      origen: "seguimiento",
+      tipoValue: s.tipoSeguimiento,
+      tipoLabel: labelSeguimiento(s.tipoSeguimiento),
+      color: tipoPalette[s.tipoSeguimiento] ?? "gray.500",
+      fecha: s.fecha,
+      adultoMayorId: s.adultoMayorId,
+      descripcion: s.descripcion ?? "",
+      responsable: s.responsable ?? "",
+      observaciones: s.observaciones ?? "",
+      estado: "",
+    }));
+    const als: Registro[] = (alertas ?? []).map((a: any) => ({
+      key: `a-${a.id}`,
+      origen: "alerta",
+      tipoValue: a.tipoAlerta,
+      tipoLabel: `Alerta: ${labelAlerta(a.tipoAlerta)}`,
+      color: "orange.500",
+      fecha: a.fechaDeteccion ?? a.createdAt,
+      adultoMayorId: a.adultoMayorId,
+      descripcion: a.titulo ? `${a.titulo}${a.descripcion ? " - " + a.descripcion : ""}` : a.descripcion ?? "",
+      responsable: a.responsableAtencion ?? "",
+      observaciones: a.observacionesResolucion ?? "",
+      estado: ESTADOS_ALERTA[a.estado] ?? a.estado ?? "",
+    }));
+    return [...segs, ...als].sort((x, y) => new Date(y.fecha).getTime() - new Date(x.fecha).getTime());
+  }, [seguimientos, alertas]);
+
+  const opcionesTipo = useMemo(() => {
+    if (filtroOrigen === "seguimiento") return TIPOS_SEGUIMIENTO;
+    if (filtroOrigen === "alerta") return TIPOS_ALERTA;
+    return [];
+  }, [filtroOrigen]);
+
+  const cambiarOrigen = (valor: string) => {
+    setFiltroOrigen(valor);
+    setFiltroTipo("todos");
+    setFiltroEstadoAlerta("todos");
   };
 
-  const getTipoLabel = (tipo: string) => {
-    const labels: Record<string, string> = {
-      visita: "Visita",
-      reporte_vulnerabilidad: "Reporte de Vulnerabilidad",
-      control_medico: "Control Médico",
-      entrevista_social: "Entrevista Social",
-      otro: "Otro"
-    };
-    return labels[tipo] || tipo;
-  };
-
-  // Filtrar seguimientos
-  const seguimientosFiltrados = useMemo(() => {
-    if (!seguimientos) return [];
-
-    return seguimientos.filter((seg: any) => {
-      // Filtro por tipo
-      if (filtroTipo !== "todos" && seg.tipoSeguimiento !== filtroTipo) {
-        return false;
+  const registrosFiltrados = useMemo(() => {
+    return registros.filter(r => {
+      if (filtroOrigen !== "todos" && r.origen !== filtroOrigen) return false;
+      if (filtroTipo !== "todos" && r.tipoValue !== filtroTipo) return false;
+      if (filtroEstadoAlerta !== "todos") {
+        if (r.origen !== "alerta") return false;
+        if (r.estado !== ESTADOS_ALERTA[filtroEstadoAlerta]) return false;
       }
-
-      // Filtro por adulto mayor
-      if (filtroAdultoMayor !== "todos" && seg.adultoMayorId !== Number(filtroAdultoMayor)) {
-        return false;
-      }
-
-      // Filtro por fecha desde
-      if (filtroFechaDesde) {
-        const fechaSeg = new Date(seg.fecha);
-        const fechaDesde = new Date(filtroFechaDesde);
-        if (fechaSeg < fechaDesde) {
-          return false;
-        }
-      }
-
-      // Filtro por fecha hasta
-      if (filtroFechaHasta) {
-        const fechaSeg = new Date(seg.fecha);
-        const fechaHasta = new Date(filtroFechaHasta);
-        if (fechaSeg > fechaHasta) {
-          return false;
-        }
-      }
-
+      if (adultoSeleccionado !== null && r.adultoMayorId !== adultoSeleccionado) return false;
+      if (filtroFechaDesde && new Date(r.fecha) < new Date(filtroFechaDesde + "T00:00:00")) return false;
+      if (filtroFechaHasta && new Date(r.fecha) > new Date(filtroFechaHasta + "T23:59:59")) return false;
       return true;
     });
-  }, [seguimientos, filtroTipo, filtroAdultoMayor, filtroFechaDesde, filtroFechaHasta]);
+  }, [registros, filtroOrigen, filtroTipo, filtroEstadoAlerta, adultoSeleccionado, filtroFechaDesde, filtroFechaHasta]);
 
   const construirFilas = () =>
-    seguimientosFiltrados.map((seg: any) => {
-      const adultoMayor = adultosMayores?.find((am: any) => am.id === seg.adultoMayorId);
+    registrosFiltrados.map(r => {
+      const am = adultosMayores?.find((x: any) => x.id === r.adultoMayorId);
       return {
-        tipo: getTipoLabel(seg.tipoSeguimiento),
-        fecha: new Date(seg.fecha).toLocaleDateString("es-AR"),
-        adultoMayor: `${adultoMayor?.nombre ?? ""} ${adultoMayor?.apellido ?? ""}`.trim() || "S/D",
-        expediente: adultoMayor?.expediente ?? "S/D",
-        responsable: seg.responsable ?? "",
-        descripcion: seg.descripcion ?? "",
-        observaciones: seg.observaciones ?? "",
+        tipo: r.tipoLabel,
+        fecha: new Date(r.fecha).toLocaleDateString("es-AR"),
+        adultoMayor: `${am?.nombre ?? ""} ${am?.apellido ?? ""}`.trim() || "S/D",
+        expediente: am?.expediente ?? "S/D",
+        estado: r.estado || "-",
+        responsable: r.responsable,
+        descripcion: r.descripcion,
+        observaciones: r.observaciones,
       };
     });
 
@@ -123,10 +187,10 @@ export default function VisitasReportes() {
 
   const handleDescargarCSV = () => {
     const filas = construirFilas();
-    const headers = ["Tipo", "Fecha", "Adulto Mayor", "Expediente", "Responsable", "Descripción", "Observaciones"];
+    const headers = ["Tipo", "Fecha", "Adulto Mayor", "Expediente", "Estado", "Responsable", "Descripción", "Observaciones"];
     const escapeCsv = (valor: string) => `"${String(valor).replace(/"/g, '""')}"`;
 
-    const contenido = [headers, ...filas.map(f => [f.tipo, f.fecha, f.adultoMayor, f.expediente, f.responsable, f.descripcion, f.observaciones])]
+    const contenido = [headers, ...filas.map(f => [f.tipo, f.fecha, f.adultoMayor, f.expediente, f.estado, f.responsable, f.descripcion, f.observaciones])]
       .map(fila => fila.map(escapeCsv).join(","))
       .join("\r\n");
 
@@ -140,21 +204,21 @@ export default function VisitasReportes() {
 
     doc.setFontSize(15);
     doc.setTextColor(91, 45, 142); // brand.600
-    doc.text("Reporte de Visitas y Seguimientos", 14, 16);
+    doc.text("Reporte de Visitas, Seguimientos y Alertas", 14, 16);
 
     doc.setFontSize(9);
     doc.setTextColor(100);
     doc.text(`Fecha de generación: ${new Date().toLocaleString("es-AR")}`, 14, 23);
-    doc.text(`Total de registros: ${seguimientosFiltrados.length}`, 14, 28);
+    doc.text(`Total de registros: ${registrosFiltrados.length}`, 14, 28);
 
     autoTable(doc, {
       startY: 33,
-      head: [["Tipo", "Fecha", "Adulto Mayor", "Expediente", "Responsable", "Descripción"]],
-      body: filas.map(f => [f.tipo, f.fecha, f.adultoMayor, f.expediente, f.responsable, f.descripcion]),
+      head: [["Tipo", "Fecha", "Adulto Mayor", "Expediente", "Estado", "Responsable", "Descripción"]],
+      body: filas.map(f => [f.tipo, f.fecha, f.adultoMayor, f.expediente, f.estado, f.responsable, f.descripcion]),
       styles: { fontSize: 8, cellPadding: 2.5, valign: "top" },
       headStyles: { fillColor: [91, 45, 142], textColor: 255, fontStyle: "bold" },
       alternateRowStyles: { fillColor: [246, 243, 250] },
-      columnStyles: { 5: { cellWidth: 90 } },
+      columnStyles: { 6: { cellWidth: 80 } },
     });
 
     doc.save(`reporte_visitas_${new Date().toISOString().split("T")[0]}.pdf`);
@@ -169,12 +233,12 @@ export default function VisitasReportes() {
             Visitas y Reportes
           </Heading>
           <Text color="gray.500" mt={2}>
-            Listado consolidado de seguimientos y reportes
+            Listado consolidado de seguimientos, reportes y alertas
           </Text>
         </Box>
         <Menu.Root>
           <Menu.Trigger asChild>
-            <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} disabled={seguimientosFiltrados.length === 0}>
+            <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} disabled={registrosFiltrados.length === 0}>
               <Download size={16} />
               Descargar Reporte
             </Button>
@@ -205,31 +269,121 @@ export default function VisitasReportes() {
           </Card.Title>
         </Card.Header>
         <Card.Body>
-          <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={4}>
+          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} gap={4}>
             <Field.Root>
-              <Field.Label>Tipo de Seguimiento</Field.Label>
+              <Field.Label>Origen</Field.Label>
               <NativeSelect.Root>
+                <NativeSelect.Field value={filtroOrigen} onChange={e => cambiarOrigen(e.target.value)}>
+                  <option value="todos">Seguimientos y Alertas</option>
+                  <option value="seguimiento">Solo Seguimientos</option>
+                  <option value="alerta">Solo Alertas</option>
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+            </Field.Root>
+
+            <Field.Root>
+              <Field.Label>{filtroOrigen === "alerta" ? "Tipo de Alerta" : "Tipo"}</Field.Label>
+              <NativeSelect.Root disabled={filtroOrigen === "todos"}>
                 <NativeSelect.Field value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
-                  <option value="todos">Todos</option>
-                  {tiposSegumiento.map(tipo => (
+                  <option value="todos">{filtroOrigen === "todos" ? "Elegí un origen para filtrar" : "Todos"}</option>
+                  {opcionesTipo.map(tipo => (
                     <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
                   ))}
                 </NativeSelect.Field>
                 <NativeSelect.Indicator />
               </NativeSelect.Root>
             </Field.Root>
+
             <Field.Root>
-              <Field.Label>Adulto Mayor</Field.Label>
-              <NativeSelect.Root>
-                <NativeSelect.Field value={filtroAdultoMayor} onChange={e => setFiltroAdultoMayor(e.target.value)}>
+              <Field.Label>Estado de la Alerta</Field.Label>
+              <NativeSelect.Root disabled={filtroOrigen === "seguimiento"}>
+                <NativeSelect.Field value={filtroEstadoAlerta} onChange={e => setFiltroEstadoAlerta(e.target.value)}>
                   <option value="todos">Todos</option>
-                  {adultosMayores?.map((am: any) => (
-                    <option key={am.id} value={am.id.toString()}>{am.nombre} {am.apellido}</option>
+                  {Object.entries(ESTADOS_ALERTA).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
                   ))}
                 </NativeSelect.Field>
                 <NativeSelect.Indicator />
               </NativeSelect.Root>
             </Field.Root>
+
+            <Field.Root>
+              <Field.Label>Adulto Mayor</Field.Label>
+              <Box position="relative" w="full">
+                <Input
+                  pl={9}
+                  pr={9}
+                  placeholder="Buscar por nombre o DNI..."
+                  value={busquedaAM}
+                  onChange={e => {
+                    setBusquedaAM(e.target.value);
+                    setAdultoSeleccionado(null);
+                    setMostrarSugerencias(true);
+                  }}
+                  onFocus={() => setMostrarSugerencias(true)}
+                  onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+                  autoComplete="off"
+                />
+                <Box position="absolute" left={3} top="50%" transform="translateY(-50%)" color="gray.400" pointerEvents="none">
+                  <Search size={16} />
+                </Box>
+                {busquedaAM && (
+                  <Box
+                    as="button"
+                    position="absolute"
+                    right={3}
+                    top="50%"
+                    transform="translateY(-50%)"
+                    color="gray.400"
+                    cursor="pointer"
+                    aria-label="Limpiar búsqueda"
+                    onMouseDown={(e: any) => {
+                      e.preventDefault();
+                      setBusquedaAM("");
+                      setAdultoSeleccionado(null);
+                    }}
+                  >
+                    <X size={16} />
+                  </Box>
+                )}
+
+                {mostrarSugerencias && busquedaAM.trim() && adultoSeleccionado === null && (
+                  <Card.Root position="absolute" top="calc(100% + 4px)" left={0} right={0} zIndex={20} maxH="240px" overflowY="auto" boxShadow="lg">
+                    <Card.Body p={1}>
+                      {sugerencias.length > 0 ? (
+                        <VStack align="stretch" gap={0}>
+                          {sugerencias.map((am: any) => (
+                            <Box
+                              key={am.id}
+                              px={3}
+                              py={2}
+                              borderRadius="md"
+                              cursor="pointer"
+                              _hover={{ bg: "bg.muted" }}
+                              onMouseDown={e => {
+                                e.preventDefault();
+                                setAdultoSeleccionado(am.id);
+                                setBusquedaAM(`${am.nombre} ${am.apellido}`);
+                                setMostrarSugerencias(false);
+                              }}
+                            >
+                              <Text fontWeight="600" fontSize="sm">{am.nombre} {am.apellido}</Text>
+                              <Text fontSize="xs" color="gray.500">DNI: {am.dni}</Text>
+                            </Box>
+                          ))}
+                        </VStack>
+                      ) : (
+                        <Text px={3} py={2} fontSize="sm" color="gray.500">
+                          Sin resultados para "{busquedaAM}"
+                        </Text>
+                      )}
+                    </Card.Body>
+                  </Card.Root>
+                )}
+              </Box>
+            </Field.Root>
+
             <Field.Root>
               <Field.Label>Desde</Field.Label>
               <Input type="date" value={filtroFechaDesde} onChange={e => setFiltroFechaDesde(e.target.value)} />
@@ -242,17 +396,17 @@ export default function VisitasReportes() {
         </Card.Body>
       </Card.Root>
 
-      {/* Listado de seguimientos */}
+      {/* Listado */}
       <VStack align="stretch" gap={4}>
         <Heading size="lg">
-          Resultados ({seguimientosFiltrados.length})
+          Resultados ({registrosFiltrados.length})
         </Heading>
 
         {isLoading ? (
           <VStack align="stretch" gap={2}>
             {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} h="10" />)}
           </VStack>
-        ) : seguimientosFiltrados.length > 0 ? (
+        ) : registrosFiltrados.length > 0 ? (
           <Card.Root>
             <Card.Body p={0} overflowX="auto">
               <Table.Root size="sm">
@@ -262,34 +416,38 @@ export default function VisitasReportes() {
                     <Table.ColumnHeader>Fecha</Table.ColumnHeader>
                     <Table.ColumnHeader>Adulto Mayor</Table.ColumnHeader>
                     <Table.ColumnHeader>Expediente</Table.ColumnHeader>
+                    <Table.ColumnHeader>Estado</Table.ColumnHeader>
                     <Table.ColumnHeader>Descripción</Table.ColumnHeader>
                     <Table.ColumnHeader>Responsable</Table.ColumnHeader>
                   </Table.Row>
                 </Table.Header>
                 <Table.Body>
-                  {seguimientosFiltrados.map((seguimiento: any) => {
-                    const adultoMayor = adultosMayores?.find((am: any) => am.id === seguimiento.adultoMayorId);
+                  {registrosFiltrados.map(r => {
+                    const am = adultosMayores?.find((x: any) => x.id === r.adultoMayorId);
                     return (
-                      <Table.Row key={seguimiento.id}>
+                      <Table.Row key={r.key}>
                         <Table.Cell>
-                          <Badge bg={tipoPalette[seguimiento.tipoSeguimiento] ?? "gray.500"} color="white">
-                            {getTipoLabel(seguimiento.tipoSeguimiento)}
+                          <Badge bg={r.color} color="white" whiteSpace="nowrap">
+                            {r.tipoLabel}
                           </Badge>
                         </Table.Cell>
                         <Table.Cell whiteSpace="nowrap" fontSize="sm" color="gray.500">
-                          {new Date(seguimiento.fecha).toLocaleDateString('es-AR')}
+                          {new Date(r.fecha).toLocaleDateString("es-AR")}
                         </Table.Cell>
                         <Table.Cell fontWeight="600" whiteSpace="nowrap">
-                          {adultoMayor ? `${adultoMayor.nombre} ${adultoMayor.apellido}` : "N/A"}
+                          {am ? `${am.nombre} ${am.apellido}` : "N/A"}
                         </Table.Cell>
                         <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">
-                          {adultoMayor?.expediente || "-"}
-                        </Table.Cell>
-                        <Table.Cell fontSize="sm" color="gray.500" maxW="xs" truncate title={seguimiento.descripcion}>
-                          {seguimiento.descripcion}
+                          {am?.expediente || "-"}
                         </Table.Cell>
                         <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">
-                          {seguimiento.responsable}
+                          {r.estado || "-"}
+                        </Table.Cell>
+                        <Table.Cell fontSize="sm" color="gray.500" maxW="xs" truncate title={r.descripcion}>
+                          {r.descripcion}
+                        </Table.Cell>
+                        <Table.Cell fontSize="sm" color="gray.500" whiteSpace="nowrap">
+                          {r.responsable || "-"}
                         </Table.Cell>
                       </Table.Row>
                     );

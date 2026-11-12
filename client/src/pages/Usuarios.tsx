@@ -20,7 +20,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { UserPlus, Shield, Eye, EyeOff, ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { UserPlus, Shield, Eye, EyeOff, ArrowLeft, Pencil, Trash2, KeyRound, Snowflake, Play } from "lucide-react";
 import { toast } from "sonner";
 
 interface Usuario {
@@ -58,8 +58,14 @@ export default function Usuarios() {
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState<"superadmin" | "admin" | "user">("admin");
 
+  // 🔑 Estados del modal de cambio de contraseña
+  const [usuarioPassword, setUsuarioPassword] = useState<Usuario | null>(null);
+  const [nuevaPassword, setNuevaPassword] = useState("");
+  const [showNuevaPassword, setShowNuevaPassword] = useState(false);
+
   useEffect(() => {
     setUsuarioEditando(null);
+    setUsuarioPassword(null);
   }, [vista]);
 
   const { data: listaUsuarios, refetch: recargarUsuarios, isLoading, error: errorQuery } = trpc.usuarios.list.useQuery(undefined, {
@@ -110,6 +116,45 @@ export default function Usuarios() {
       toast.error(err.message || "Error al eliminar el usuario.");
     },
   });
+
+  const passwordMutation = trpc.usuarios.cambiarPassword.useMutation({
+    onSuccess: () => {
+      toast.success("Contraseña actualizada. Ya puede ingresar con la nueva.");
+      setUsuarioPassword(null);
+      setNuevaPassword("");
+      setShowNuevaPassword(false);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Error al cambiar la contraseña.");
+    },
+  });
+
+  const activoMutation = trpc.usuarios.setActivo.useMutation({
+    onSuccess: (_d, vars) => {
+      toast.success(vars.activo ? "Usuario reactivado." : "Usuario congelado. No podrá ingresar al sistema.");
+      recargarUsuarios();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Error al cambiar el estado del usuario.");
+    },
+  });
+
+  const handleSubmitPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!usuarioPassword) return;
+    passwordMutation.mutate({ id: usuarioPassword.id, password: nuevaPassword });
+  };
+
+  const handleCongelar = (user: any) => {
+    const nombreCompleto = `${user.nombre} ${user.apellido}`;
+    const congelado = user.activo === false;
+    const mensaje = congelado
+      ? `¿Reactivar a ${nombreCompleto}? Podrá volver a ingresar al sistema.`
+      : `¿Congelar a ${nombreCompleto}? No podrá ingresar al sistema (y se cerrará su sesión actual) hasta que lo reactives. Sus datos y registros se conservan.`;
+    if (confirm(mensaje)) {
+      activoMutation.mutate({ id: user.id, activo: congelado });
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,7 +258,12 @@ export default function Usuarios() {
                 <Table.Body>
                   {listaUsuarios.map((user: any) => (
                     <Table.Row key={user.id}>
-                      <Table.Cell fontWeight="600">{user.nombre} {user.apellido}</Table.Cell>
+                      <Table.Cell fontWeight="600" opacity={user.activo === false ? 0.6 : 1}>
+                        {user.nombre} {user.apellido}
+                        {user.activo === false && (
+                          <Badge ml={2} bg="cyan.100" color="cyan.800">Congelado</Badge>
+                        )}
+                      </Table.Cell>
                       <Table.Cell fontFamily="mono" fontSize="xs">{user.id}</Table.Cell>
                       <Table.Cell>{user.email}</Table.Cell>
                       <Table.Cell>
@@ -225,6 +275,28 @@ export default function Usuarios() {
                         <HStack justify="center" gap={1}>
                           <IconButton aria-label="Editar" variant="ghost" size="sm" onClick={() => handleAbrirEdicion(user)}>
                             <Pencil size={16} />
+                          </IconButton>
+                          <IconButton
+                            aria-label="Cambiar contraseña"
+                            title="Cambiar contraseña"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setUsuarioPassword(user);
+                              setNuevaPassword("");
+                            }}
+                          >
+                            <KeyRound size={16} />
+                          </IconButton>
+                          <IconButton
+                            aria-label={user.activo === false ? "Reactivar usuario" : "Congelar usuario"}
+                            title={user.activo === false ? "Reactivar usuario" : "Congelar usuario (baja, licencia, etc.)"}
+                            variant="ghost"
+                            size="sm"
+                            color={user.activo === false ? "green.600" : "cyan.600"}
+                            onClick={() => handleCongelar(user)}
+                          >
+                            {user.activo === false ? <Play size={16} /> : <Snowflake size={16} />}
                           </IconButton>
                           <IconButton aria-label="Eliminar" variant="ghost" size="sm" color="red.600" onClick={() => handleEliminar(user.id, `${user.nombre} ${user.apellido}`)}>
                             <Trash2 size={16} />
@@ -271,8 +343,10 @@ export default function Usuarios() {
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      placeholder="Definir contraseña"
+                      placeholder="Mínimo 8 caracteres, con letras y números"
                       pr={12}
+                      minLength={8}
+                      autoComplete="new-password"
                       required
                     />
                     <IconButton
@@ -309,6 +383,78 @@ export default function Usuarios() {
           </Card.Body>
         </Card.Root>
       )}
+
+      {/* 🔑 MODAL: CAMBIO DE CONTRASEÑA */}
+      <Dialog.Root
+        open={!!usuarioPassword}
+        onOpenChange={d => {
+          if (!d.open) {
+            setUsuarioPassword(null);
+            setNuevaPassword("");
+          }
+        }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="md">
+              <Dialog.Header bg={{ base: "brand.50", _dark: "brand.900" }} borderBottomWidth="1px" borderColor={{ base: "brand.100", _dark: "brand.700" }}>
+                <Dialog.Title color="heading">Cambiar Contraseña</Dialog.Title>
+                <Dialog.CloseTrigger asChild>
+                  <IconButton aria-label="Cerrar" variant="ghost" size="sm" />
+                </Dialog.CloseTrigger>
+              </Dialog.Header>
+              <Dialog.Body p={6}>
+                {usuarioPassword && (
+                  <form onSubmit={handleSubmitPassword}>
+                    <VStack align="stretch" gap={4}>
+                      <Text fontSize="sm" color="gray.500">
+                        Definí una contraseña nueva para <b>{usuarioPassword.nombre} {usuarioPassword.apellido}</b> (DNI {usuarioPassword.id}). Pasale la nueva clave de forma segura.
+                      </Text>
+                      <Field.Root required>
+                        <Field.Label>Nueva contraseña</Field.Label>
+                        <Box position="relative" w="full">
+                          <Input
+                            type={showNuevaPassword ? "text" : "password"}
+                            value={nuevaPassword}
+                            onChange={e => setNuevaPassword(e.target.value)}
+                            placeholder="Mínimo 8 caracteres, con letras y números"
+                            minLength={8}
+                            pr={12}
+                            autoComplete="new-password"
+                            required
+                          />
+                          <IconButton
+                            aria-label={showNuevaPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                            variant="ghost"
+                            size="sm"
+                            position="absolute"
+                            right={1}
+                            top="50%"
+                            transform="translateY(-50%)"
+                            onClick={() => setShowNuevaPassword(!showNuevaPassword)}
+                            type="button"
+                          >
+                            {showNuevaPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </IconButton>
+                        </Box>
+                      </Field.Root>
+                      <HStack gap={3} pt={2}>
+                        <Button type="button" variant="outline" flex={1} onClick={() => setUsuarioPassword(null)}>
+                          Cancelar
+                        </Button>
+                        <Button type="submit" flex={1} bg="brand.600" color="white" _hover={{ bg: "brand.700" }} loading={passwordMutation.isPending}>
+                          Guardar Contraseña
+                        </Button>
+                      </HStack>
+                    </VStack>
+                  </form>
+                )}
+              </Dialog.Body>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       {/* 🪟 MODAL FLOTANTE: EDICIÓN DE OPERADOR */}
       <Dialog.Root open={!!usuarioEditando} onOpenChange={d => !d.open && setUsuarioEditando(null)}>

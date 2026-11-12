@@ -23,9 +23,12 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Building2, Check, Edit, FileText, Plus, Search, Trash, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { Building2, Check, Download, Edit, Eye, FileText, Paperclip, Plus, Search, Trash, Trash2, Upload, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { TIPOS_PERMITIDOS, abrirArchivo, prepararArchivo } from "@/lib/archivos";
+import VisorArchivo, { type ArchivoVisor } from "@/components/VisorArchivo";
+import { generarLegajoResidenciaPdf } from "@/lib/legajoPdf";
 
 type ResidenciaForm = {
   nombre: string;
@@ -123,6 +126,132 @@ export default function Residencias() {
 
   const { data: residencias, isLoading } = trpc.residencias.list.useQuery();
   const utils = trpc.useUtils();
+
+  // ======= DOCUMENTACIÓN DIGITALIZADA (un archivo por requisito) =======
+  const docInputRef = useRef<HTMLInputElement>(null);
+  const requisitoPendiente = useRef<string | null>(null);
+  const [subiendoReq, setSubiendoReq] = useState<string | null>(null);
+  const [archivoVisor, setArchivoVisor] = useState<ArchivoVisor | null>(null);
+  const { data: documentosMeta } = trpc.residenciaDocumentos.listMeta.useQuery();
+
+  const documentosDe = (residenciaId: number | null | undefined) =>
+    (documentosMeta ?? []).filter((d: any) => d.residenciaId === residenciaId);
+  const docDe = (residenciaId: number | null | undefined, requisito: string) =>
+    (documentosMeta ?? []).find((d: any) => d.residenciaId === residenciaId && d.requisito === requisito);
+  const cantidadCargada = (residenciaId: number) =>
+    requisitosList.filter(r => docDe(residenciaId, r.key as string)).length;
+
+  const subirDocMutation = trpc.residenciaDocumentos.upload.useMutation({
+    onSuccess: () => {
+      toast.success("Documento cargado");
+      utils.residenciaDocumentos.listMeta.invalidate();
+      setSubiendoReq(null);
+    },
+    onError: error => {
+      toast.error(error.message || "No se pudo cargar el documento");
+      setSubiendoReq(null);
+    },
+  });
+
+  const eliminarDocMutation = trpc.residenciaDocumentos.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Documento eliminado");
+      utils.residenciaDocumentos.listMeta.invalidate();
+    },
+    onError: error => toast.error(error.message || "No se pudo eliminar el documento"),
+  });
+
+  const elegirArchivo = (requisito: string) => {
+    requisitoPendiente.current = requisito;
+    docInputRef.current?.click();
+  };
+
+  const handleArchivoElegido = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const requisito = requisitoPendiente.current;
+    if (!file || !requisito || !editingId) return;
+    if (!TIPOS_PERMITIDOS.includes(file.type)) {
+      toast.error("Solo se permiten archivos PDF, JPG o PNG");
+      return;
+    }
+    if (file.type === "application/pdf" && file.size > 9 * 1024 * 1024) {
+      toast.error("El PDF pesa más de 9 MB. Probá escanearlo con menor resolución.");
+      return;
+    }
+    try {
+      setSubiendoReq(requisito);
+      const archivo = await prepararArchivo(file);
+      subirDocMutation.mutate({ residenciaId: editingId, requisito: requisito as any, nombreArchivo: file.name, archivo });
+    } catch (err: any) {
+      setSubiendoReq(null);
+      toast.error(err.message || "No se pudo procesar el archivo");
+    }
+  };
+
+  const verDocumento = async (requisito: string, descargar: boolean) => {
+    if (!editingId) return;
+    try {
+      const doc = await utils.residenciaDocumentos.get.fetch({ residenciaId: editingId, requisito });
+      if (!doc) { toast.error("No hay archivo cargado"); return; }
+      if (descargar) await abrirArchivo(doc.archivo, doc.nombreArchivo, true);
+      else setArchivoVisor({ nombre: doc.nombreArchivo, dataUri: doc.archivo });
+    } catch {
+      toast.error("No se pudo abrir el archivo");
+    }
+  };
+
+  const eliminarDocumento = (requisito: string) => {
+    if (!editingId) return;
+    if (confirm("¿Eliminar este documento? El requisito volverá a figurar como pendiente.")) {
+      eliminarDocMutation.mutate({ residenciaId: editingId, requisito });
+    }
+  };
+
+  // Arma un único PDF con portada + toda la documentación cargada, en el orden del checklist
+  const [exportandoLegajo, setExportandoLegajo] = useState(false);
+  const handleExportarLegajo = async () => {
+    if (!editingId) return;
+    setExportandoLegajo(true);
+    try {
+      const blob = await generarLegajoResidenciaPdf({
+        titulo: form.nombre,
+        datos: [
+          { label: "Dirección", value: form.direccion },
+          { label: "Teléfono", value: form.telefono },
+          { label: "Email", value: form.email },
+          { label: "Capacidad", value: form.capacidad ? `${form.capacidad} plazas` : "" },
+          { label: "Estado de habilitación", value: estadoLabels[form.estadoHabilitacion] ?? form.estadoHabilitacion },
+          {
+            label: "Vencimiento",
+            value: form.fechaVencimientoHabilitacion ? new Date(form.fechaVencimientoHabilitacion).toLocaleDateString("es-AR") : "",
+          },
+          { label: "Solicitante", value: [form.nombreSolicitante, form.dniSolicitante && `DNI ${form.dniSolicitante}`].filter(Boolean).join(" - ") },
+          { label: "Apoderado legal", value: [form.nombreApoderado, form.dniApoderado && `DNI ${form.dniApoderado}`].filter(Boolean).join(" - ") },
+        ],
+        requisitos: requisitosList.map(r => ({ key: r.key as string, label: r.label })),
+        obtenerDocumento: async key => {
+          if (!docDe(editingId, key)) return null;
+          const d = await utils.residenciaDocumentos.get.fetch({ residenciaId: editingId, requisito: key });
+          return d ? { archivo: d.archivo, nombreArchivo: d.nombreArchivo } : null;
+        },
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `legajo_${form.nombre.replace(/[^\w\-]+/g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast.success("Legajo exportado");
+    } catch (err) {
+      console.error(err);
+      toast.error("No se pudo generar el legajo");
+    } finally {
+      setExportandoLegajo(false);
+    }
+  };
 
   const resetAndClose = () => {
     setOpen(false);
@@ -259,6 +388,9 @@ export default function Residencias() {
                         </HStack>
                       </Box>
                       <HStack gap={2} flexWrap="wrap">
+                        <Button variant="outline" borderColor="gray.300" color="fg" onClick={handleExportarLegajo} loading={exportandoLegajo}>
+                          <Download size={15} /> Exportar Legajo (PDF)
+                        </Button>
                         <Button variant="outline" borderColor="brand.400" color="brand.700" onClick={() => setViewMode(false)}>
                           <Edit size={15} /> Editar Residencia
                         </Button>
@@ -326,24 +458,86 @@ export default function Residencias() {
                       </VStack>
 
                       <Box>
-                        <Heading size="md" borderBottomWidth="2px" borderColor="gray.100" pb={2} mb={3}>
-                          Checklist de Documentación
-                        </Heading>
-                        <Box bg="bg.panel" borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={5} boxShadow="sm">
-                          <VStack align="stretch" gap={4}>
+                        <Flex justify="space-between" align="center" borderBottomWidth="2px" borderColor="gray.100" pb={2} mb={3}>
+                          <Heading size="md">Documentación Digitalizada</Heading>
+                          <Badge
+                            bg={cantidadCargada(editingId!) === requisitosList.length ? "green.600" : "orange.500"}
+                            color="white"
+                          >
+                            {cantidadCargada(editingId!)} de {requisitosList.length} cargados
+                          </Badge>
+                        </Flex>
+
+                        <input
+                          ref={docInputRef}
+                          type="file"
+                          accept="application/pdf,image/jpeg,image/png"
+                          style={{ display: "none" }}
+                          onChange={handleArchivoElegido}
+                        />
+
+                        <Text fontSize="xs" color="gray.500" mb={3}>
+                          Cada requisito se marca como cumplido solo cuando tiene su archivo cargado (PDF preferentemente; también se aceptan fotos). Así se ve de un vistazo qué falta.
+                        </Text>
+
+                        <Box bg="bg.panel" borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={4} boxShadow="sm">
+                          <VStack align="stretch" gap={3}>
                             {requisitosList.map(req => {
-                              const checked = Boolean(form[req.key]);
+                              const doc: any = docDe(editingId, req.key as string);
+                              const cargando = subiendoReq === req.key;
                               return (
-                                <HStack key={req.key} gap={3} align="flex-start">
-                                  {checked ? <Check size={18} color="var(--chakra-colors-green-600)" /> : <X size={18} color="var(--chakra-colors-gray-300)" />}
-                                  <Text fontSize="sm" fontWeight={checked ? "600" : "400"} color={checked ? "fg" : "fg.muted"} textDecoration={checked ? "none" : "line-through"} opacity={checked ? 1 : 0.7}>
-                                    {req.label}
-                                  </Text>
-                                </HStack>
+                                <Flex key={req.key} gap={3} align="flex-start" justify="space-between" wrap="wrap">
+                                  <HStack gap={3} align="flex-start" flex={1} minW="220px">
+                                    {doc ? (
+                                      <Check size={18} color="var(--chakra-colors-green-600)" style={{ flexShrink: 0, marginTop: 2 }} />
+                                    ) : (
+                                      <X size={18} color="var(--chakra-colors-gray-300)" style={{ flexShrink: 0, marginTop: 2 }} />
+                                    )}
+                                    <Box>
+                                      <Text fontSize="sm" fontWeight={doc ? "600" : "400"} color={doc ? "fg" : "fg.muted"}>
+                                        {req.label}
+                                      </Text>
+                                      {doc && (
+                                        <Text fontSize="11px" color="gray.500">
+                                          {doc.nombreArchivo} · {new Date(doc.createdAt).toLocaleDateString("es-AR")}
+                                        </Text>
+                                      )}
+                                    </Box>
+                                  </HStack>
+                                  <HStack gap={1}>
+                                    {doc && (
+                                      <>
+                                        <IconButton aria-label="Ver" title="Ver" size="xs" variant="ghost" onClick={() => verDocumento(req.key as string, false)}>
+                                          <Eye size={14} />
+                                        </IconButton>
+                                        <IconButton aria-label="Descargar" title="Descargar" size="xs" variant="ghost" onClick={() => verDocumento(req.key as string, true)}>
+                                          <Download size={14} />
+                                        </IconButton>
+                                      </>
+                                    )}
+                                    <Button
+                                      size="xs"
+                                      variant={doc ? "outline" : "solid"}
+                                      bg={doc ? undefined : "brand.600"}
+                                      color={doc ? undefined : "white"}
+                                      _hover={doc ? undefined : { bg: "brand.700" }}
+                                      loading={cargando}
+                                      onClick={() => elegirArchivo(req.key as string)}
+                                    >
+                                      <Upload size={12} /> {doc ? "Reemplazar" : "Subir"}
+                                    </Button>
+                                    {doc && (
+                                      <IconButton aria-label="Eliminar" title="Eliminar" size="xs" variant="ghost" color="red.600" onClick={() => eliminarDocumento(req.key as string)}>
+                                        <Trash2 size={14} />
+                                      </IconButton>
+                                    )}
+                                  </HStack>
+                                </Flex>
                               );
                             })}
                           </VStack>
                         </Box>
+
                       </Box>
                     </Grid>
                   </VStack>
@@ -471,30 +665,24 @@ export default function Residencias() {
 
                         <Tabs.Content value="requisitos">
                           <Box pt={2}>
-                            <SectionLabel>Checklist de Habilitación</SectionLabel>
-                            <SimpleGrid columns={{ base: 1, md: 2 }} gap={4} mt={4}>
-                              {requisitosList.map(req => (
-                                <Checkbox.Root
-                                  key={req.key}
-                                  checked={Boolean(form[req.key])}
-                                  onCheckedChange={d => setForm({ ...form, [req.key]: !!d.checked })}
-                                  p={4}
-                                  bg="bg.panel"
-                                  borderRadius="lg"
-                                  borderWidth="1px"
-                                  borderColor="gray.200"
-                                  _hover={{ borderColor: "brand.300" }}
-                                  cursor="pointer"
-                                  alignItems="flex-start"
-                                >
-                                  <Checkbox.HiddenInput />
-                                  <Checkbox.Control mt="1" />
-                                  <Checkbox.Label fontSize="sm" fontWeight="500" color="fg" whiteSpace="normal">
-                                    {req.label}
-                                  </Checkbox.Label>
-                                </Checkbox.Root>
-                              ))}
-                            </SimpleGrid>
+                            <SectionLabel>Documentación de Habilitación</SectionLabel>
+                            <Text fontSize="sm" color="gray.500" mt={3} mb={4}>
+                              Los documentos ya no se tildan a mano: cada requisito se marca como cumplido cuando se carga su archivo (PDF).
+                              {editingId
+                                ? " Guardá los cambios y cargalos desde la vista de la residencia (botón Ver / Detalles)."
+                                : " Guardá la residencia y luego abrila (botón Ver / Detalles) para cargar la documentación."}
+                            </Text>
+                            <VStack align="stretch" gap={2}>
+                              {requisitosList.map(req => {
+                                const cargado = editingId ? Boolean(docDe(editingId, req.key as string)) : false;
+                                return (
+                                  <HStack key={req.key} gap={3} p={3} borderWidth="1px" borderColor="gray.200" borderRadius="lg" bg="bg.panel">
+                                    {cargado ? <Check size={16} color="var(--chakra-colors-green-600)" /> : <X size={16} color="var(--chakra-colors-gray-300)" />}
+                                    <Text fontSize="sm" color={cargado ? "fg" : "fg.muted"}>{req.label}</Text>
+                                  </HStack>
+                                );
+                              })}
+                            </VStack>
                           </Box>
                         </Tabs.Content>
                       </Tabs.Root>
@@ -521,6 +709,8 @@ export default function Residencias() {
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      <VisorArchivo archivo={archivoVisor} onClose={() => setArchivoVisor(null)} />
 
       <Box maxW="sm">
         <Box position="relative">
@@ -557,6 +747,7 @@ export default function Residencias() {
                       <Table.ColumnHeader>Capacidad</Table.ColumnHeader>
                       <Table.ColumnHeader>Habilitación</Table.ColumnHeader>
                       <Table.ColumnHeader>Vencimiento</Table.ColumnHeader>
+                      <Table.ColumnHeader>Documentación</Table.ColumnHeader>
                       <Table.ColumnHeader textAlign="right">Acciones</Table.ColumnHeader>
                     </Table.Row>
                   </Table.Header>
@@ -574,6 +765,14 @@ export default function Residencias() {
                           {residencia.fechaVencimientoHabilitacion
                             ? new Date(residencia.fechaVencimientoHabilitacion).toLocaleDateString("es-AR")
                             : "--"}
+                        </Table.Cell>
+                        <Table.Cell>
+                          <Badge
+                            bg={cantidadCargada(residencia.id) === requisitosList.length ? "green.600" : "orange.500"}
+                            color="white"
+                          >
+                            {cantidadCargada(residencia.id)}/{requisitosList.length}
+                          </Badge>
                         </Table.Cell>
                         <Table.Cell textAlign="right">
                           <IconButton aria-label="Ver / Editar" variant="ghost" size="sm" onClick={() => handleEdit(residencia)}>

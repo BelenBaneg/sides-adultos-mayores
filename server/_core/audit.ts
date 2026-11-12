@@ -2,19 +2,21 @@ import * as db from "../db";
 import type { TrpcContext } from "./context";
 
 const CAMPOS_SENSIBLES = ["password", "passwordHash"];
-const CAMPOS_ARCHIVO = ["actaDefuncion", "documentacionAdjunta"];
+const CAMPOS_ARCHIVO = ["actaDefuncion", "documentacionAdjunta", "archivo"];
 
 const ACCIONES: Record<string, string> = {
   create: "crear",
   update: "editar",
   delete: "eliminar",
   darDeBaja: "baja",
+  cambiarPassword: "cambio_password",
+  setActivo: "congelar",
+  upload: "adjuntar",
 };
 
 export function obtenerIp(req: TrpcContext["req"]): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0];
-  return (raw || req.ip || req.socket?.remoteAddress || "").toString().trim().slice(0, 64);
+  // req.ip ya respeta "trust proxy" (la IP real que informa Render) y no se puede falsear con encabezados propios
+  return (req.ip || req.socket?.remoteAddress || "").toString().trim().slice(0, 64);
 }
 
 // Quita contraseñas, reemplaza archivos pesados por un aviso y recorta textos largos.

@@ -23,6 +23,8 @@ import {
   InsertAmpliacion,
   auditoria,
   InsertAuditoria,
+  fichasFirmadas,
+  residenciaDocumentos,
 } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -222,7 +224,116 @@ export async function deleteAdultoMayor(id: number): Promise<void> {
   await db.delete(seguimientos).where(eq(seguimientos.adultoMayorId, id));
   await db.delete(alertas).where(eq(alertas.adultoMayorId, id));
   await db.delete(derivaciones).where(eq(derivaciones.adultoMayorId, id));
+  await db.delete(fichasFirmadas).where(eq(fichasFirmadas.adultoMayorId, id));
   await db.delete(adultosMayores).where(eq(adultosMayores.id, id));
+}
+
+// ============ DOCUMENTACIÓN DE RESIDENCIAS ============
+
+export type ResidenciaDocumentoInput = {
+  residenciaId: number;
+  requisito: string;
+  nombreArchivo: string;
+  tipoMime: string;
+  tamano: number;
+  archivo: string;
+  subidoPorId?: string | null;
+  subidoPorNombre?: string | null;
+};
+
+// Un archivo por requisito: si ya había uno, se reemplaza.
+export async function guardarResidenciaDocumento(data: ResidenciaDocumentoInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(residenciaDocumentos)
+    .where(and(eq(residenciaDocumentos.residenciaId, data.residenciaId), eq(residenciaDocumentos.requisito, data.requisito)));
+  await db.insert(residenciaDocumentos).values(data);
+}
+
+// Datos livianos (sin el archivo) de todos los documentos cargados.
+export async function listarResidenciaDocumentosMeta() {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select({
+      residenciaId: residenciaDocumentos.residenciaId,
+      requisito: residenciaDocumentos.requisito,
+      nombreArchivo: residenciaDocumentos.nombreArchivo,
+      tipoMime: residenciaDocumentos.tipoMime,
+      tamano: residenciaDocumentos.tamano,
+      subidoPorNombre: residenciaDocumentos.subidoPorNombre,
+      createdAt: residenciaDocumentos.createdAt,
+    })
+    .from(residenciaDocumentos);
+}
+
+export async function obtenerResidenciaDocumento(residenciaId: number, requisito: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db
+    .select()
+    .from(residenciaDocumentos)
+    .where(and(eq(residenciaDocumentos.residenciaId, residenciaId), eq(residenciaDocumentos.requisito, requisito)))
+    .limit(1);
+  return r[0];
+}
+
+export async function eliminarResidenciaDocumento(residenciaId: number, requisito: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(residenciaDocumentos)
+    .where(and(eq(residenciaDocumentos.residenciaId, residenciaId), eq(residenciaDocumentos.requisito, requisito)));
+}
+
+// ============ FICHAS FIRMADAS ============
+
+export type FichaFirmadaInput = {
+  adultoMayorId: number;
+  nombreArchivo: string;
+  tipoMime: string;
+  tamano: number;
+  archivo: string;
+  subidoPorId?: string | null;
+  subidoPorNombre?: string | null;
+};
+
+// Una sola ficha firmada por adulto mayor: si ya había una, se reemplaza.
+export async function guardarFichaFirmada(data: FichaFirmadaInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(fichasFirmadas).where(eq(fichasFirmadas.adultoMayorId, data.adultoMayorId));
+  await db.insert(fichasFirmadas).values(data);
+}
+
+// Datos livianos (sin el archivo) de todas las fichas firmadas.
+export async function listarFichasFirmadasMeta() {
+  const db = await getDb();
+  if (!db) return [];
+  return await db
+    .select({
+      adultoMayorId: fichasFirmadas.adultoMayorId,
+      nombreArchivo: fichasFirmadas.nombreArchivo,
+      tipoMime: fichasFirmadas.tipoMime,
+      tamano: fichasFirmadas.tamano,
+      subidoPorNombre: fichasFirmadas.subidoPorNombre,
+      createdAt: fichasFirmadas.createdAt,
+    })
+    .from(fichasFirmadas);
+}
+
+export async function obtenerFichaFirmada(adultoMayorId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(fichasFirmadas).where(eq(fichasFirmadas.adultoMayorId, adultoMayorId)).limit(1);
+  return r[0];
+}
+
+export async function eliminarFichaFirmada(adultoMayorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(fichasFirmadas).where(eq(fichasFirmadas.adultoMayorId, adultoMayorId));
 }
 
 export type DarDeBajaInput = {
@@ -402,10 +513,14 @@ export async function getDashboardStats() {
   const alertasPendientes = await getAlertasPendientes();
   const alertasCriticas = alertasPendientes.filter(a => a.prioridad === "critica" || a.prioridad === "alta");
 
+  const ahora = Date.now();
+  const alertasVencidas = alertasPendientes.filter(a => a.fechaLimite && new Date(a.fechaLimite).getTime() < ahora);
+
   return {
     totalAdultosMayores: totalAdultos.length,
     totalResidencias: totalResidencias.length,
     alertasPendientes: alertasPendientes.length,
     alertasCriticas: alertasCriticas.length,
+    alertasVencidas: alertasVencidas.length,
   };
 }

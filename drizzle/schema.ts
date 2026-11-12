@@ -57,6 +57,8 @@ export const users = pgTable("users", {
   passwordHash: varchar("passwordHash", { length: 255 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: roleEnum("role").default("user").notNull(),
+  // false = usuario congelado (baja, licencia, etc.): no puede iniciar sesión
+  activo: boolean("activo").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -213,6 +215,8 @@ export const alertas = pgTable("alertas", {
   descripcion: text("descripcion").notNull(),
   estado: estadoAlertaEnum("estado").default("pendiente").notNull(),
   fechaDeteccion: timestamp("fechaDeteccion").defaultNow().notNull(),
+  // Plazo máximo para resolverla (según prioridad). Null en alertas anteriores a este campo.
+  fechaLimite: timestamp("fechaLimite"),
   fechaResolucion: timestamp("fechaResolucion"),
   responsableAtencion: varchar("responsableAtencion", { length: 255 }),
   observacionesResolucion: text("observacionesResolucion"),
@@ -230,7 +234,12 @@ export const derivaciones = pgTable("derivaciones", {
     .references(() => adultosMayores.id),
   fechaDerivacion: timestamp("fechaDerivacion").defaultNow().notNull(),
   motivo: text("motivo").notNull(),
-  juzgado: varchar("juzgado", { length: 255 }).notNull(),
+  // "judicial" | "interna" | "externa"
+  tipoDerivacion: varchar("tipoDerivacion", { length: 20 }).default("judicial").notNull(),
+  // Solo para derivaciones internas/externas: a qué dependencia se deriva
+  dependencia: varchar("dependencia", { length: 255 }),
+  // Solo para derivaciones judiciales
+  juzgado: varchar("juzgado", { length: 255 }),
   numeroExpediente: varchar("numeroExpediente", { length: 100 }),
   fiscalia: varchar("fiscalia", { length: 255 }),
   estadoDerivacion: estadoDerivacionEnum("estadoDerivacion").default("iniciada").notNull(),
@@ -251,6 +260,43 @@ export type InsertDerivacion = typeof derivaciones.$inferInsert;
  * Auditoría: registro de movimientos de los usuarios (accesos y cambios).
  * No usa claves foráneas a propósito: el historial se conserva aunque se borre el usuario o el registro afectado.
  */
+/**
+ * Ficha firmada (PDF o imagen escaneada) de cada adulto mayor.
+ * Se guarda en una tabla aparte para no cargar el archivo en los listados.
+ */
+export const fichasFirmadas = pgTable("fichas_firmadas", {
+  id: serial("id").primaryKey(),
+  adultoMayorId: integer("adultoMayorId")
+    .notNull()
+    .references(() => adultosMayores.id),
+  nombreArchivo: varchar("nombreArchivo", { length: 255 }).notNull(),
+  tipoMime: varchar("tipoMime", { length: 100 }).notNull(),
+  tamano: integer("tamano").notNull(), // bytes del archivo ya codificado
+  archivo: text("archivo").notNull(), // data URI en base64
+  subidoPorId: varchar("subidoPorId", { length: 20 }),
+  subidoPorNombre: varchar("subidoPorNombre", { length: 320 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+/**
+ * Documentación digitalizada de cada residencia (un archivo por requisito del checklist,
+ * más un "legajo" completo opcional). El requisito se considera cumplido cuando hay archivo cargado.
+ */
+export const residenciaDocumentos = pgTable("residencia_documentos", {
+  id: serial("id").primaryKey(),
+  residenciaId: integer("residenciaId")
+    .notNull()
+    .references(() => residencias.id),
+  requisito: varchar("requisito", { length: 40 }).notNull(), // reqNota, reqProyecto, ... o "legajo"
+  nombreArchivo: varchar("nombreArchivo", { length: 255 }).notNull(),
+  tipoMime: varchar("tipoMime", { length: 100 }).notNull(),
+  tamano: integer("tamano").notNull(),
+  archivo: text("archivo").notNull(), // data URI en base64
+  subidoPorId: varchar("subidoPorId", { length: 20 }),
+  subidoPorNombre: varchar("subidoPorNombre", { length: 320 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export const auditoria = pgTable("auditoria", {
   id: serial("id").primaryKey(),
   userId: varchar("userId", { length: 20 }),

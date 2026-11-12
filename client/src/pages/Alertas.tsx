@@ -22,8 +22,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { AlertCircle, Plus, CheckCircle, Clock, Bell, Eye, Edit, Trash, User, Search } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { PLAZO_TEXTO } from "@shared/alertas";
 
 type AlertaForm = {
   adultoMayorId: number | undefined;
@@ -63,6 +64,39 @@ function PrioridadBadge({ prioridad }: { prioridad: string }) {
   );
 }
 
+function formatearRestante(ms: number): string {
+  const abs = Math.abs(ms);
+  const horas = Math.floor(abs / 3600000);
+  if (horas < 1) return `${Math.max(1, Math.floor(abs / 60000))} min`;
+  if (horas < 48) return `${horas} h`;
+  return `${Math.floor(horas / 24)} días`;
+}
+
+// Muestra el plazo de resolución: "Vence en 5 h", "Vencida hace 2 días", etc.
+function VenceBadge({ fechaLimite, estado }: { fechaLimite?: any; estado: string }) {
+  if (!fechaLimite) return <Text fontSize="xs" color="gray.400">-</Text>;
+  const limite = new Date(fechaLimite);
+  const fechaTxt = limite.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  if (estado === "resuelta") return <Text fontSize="xs" color="gray.500">{fechaTxt}</Text>;
+
+  const restante = limite.getTime() - Date.now();
+  const vencida = restante < 0;
+  const porVencer = !vencida && restante < 24 * 3600000;
+
+  return (
+    <VStack align="flex-start" gap={0.5}>
+      <Badge
+        bg={vencida ? "red.600" : porVencer ? "orange.500" : "green.600"}
+        color="white"
+        whiteSpace="nowrap"
+      >
+        {vencida ? `Vencida hace ${formatearRestante(restante)}` : `Vence en ${formatearRestante(restante)}`}
+      </Badge>
+      <Text fontSize="11px" color="gray.500">{fechaTxt}</Text>
+    </VStack>
+  );
+}
+
 export default function Alertas() {
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState(false);
@@ -82,6 +116,21 @@ export default function Alertas() {
   const { data: adultosMayores } = trpc.adultosMayores.list.useQuery();
   const utils = trpc.useUtils();
 
+  const [busquedaAM, setBusquedaAM] = useState("");
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+
+  const sugerenciasAM = useMemo(() => {
+    const q = busquedaAM.trim().toLowerCase();
+    if (!q) return [];
+    return (adultosMayores ?? [])
+      .filter((am: any) => {
+        const nombreCompleto = `${am.nombre ?? ""} ${am.apellido ?? ""}`.toLowerCase();
+        const dni = (am.dni ?? "").toString().toLowerCase();
+        return nombreCompleto.includes(q) || dni.includes(q);
+      })
+      .slice(0, 8);
+  }, [adultosMayores, busquedaAM]);
+
   const createMutation = trpc.alertas.create.useMutation({
     onSuccess: () => {
       toast.success("Alerta creada exitosamente");
@@ -90,6 +139,7 @@ export default function Alertas() {
       utils.dashboard.stats.invalidate();
       setOpen(false);
       setForm(initialForm);
+      setBusquedaAM("");
     },
     onError: (error) => {
       toast.error(error.message || "Error al crear alerta");
@@ -196,6 +246,8 @@ export default function Alertas() {
       titulo: alertaView.titulo,
       descripcion: alertaView.descripcion,
     });
+    const am = adultosMayores?.find((a: any) => a.id === alertaView.adultoMayorId);
+    setBusquedaAM(am ? `${am.nombre} ${am.apellido}` : "");
     setEditingId(alertaView.id);
     setViewMode(false);
   };
@@ -229,7 +281,14 @@ export default function Alertas() {
     return nombreCompleto.includes(q) || dni.includes(q);
   };
 
-  const alertasPendientes = (alertas?.filter(a => a.estado === "pendiente" || a.estado === "en_atencion") || []).filter(matchesBusqueda);
+  // Las más urgentes primero: ordenadas por fecha límite (las que no tienen plazo, al final)
+  const alertasPendientes = (alertas?.filter(a => a.estado === "pendiente" || a.estado === "en_atencion") || [])
+    .filter(matchesBusqueda)
+    .sort((a: any, b: any) => {
+      const fa = a.fechaLimite ? new Date(a.fechaLimite).getTime() : Infinity;
+      const fb = b.fechaLimite ? new Date(b.fechaLimite).getTime() : Infinity;
+      return fa - fb;
+    });
   const alertasResueltas = (alertas?.filter(a => a.estado === "resuelta") || []).filter(matchesBusqueda);
 
   return (
@@ -244,7 +303,7 @@ export default function Alertas() {
             Gestión de casos críticos y situaciones de vulnerabilidad
           </Text>
         </Box>
-        <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} onClick={() => { setForm(initialForm); setEditingId(null); setViewMode(false); setOpen(true); }}>
+        <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} onClick={() => { setForm(initialForm); setBusquedaAM(""); setEditingId(null); setViewMode(false); setOpen(true); }}>
           <Plus size={16} />
           Nueva Alerta
         </Button>
@@ -256,6 +315,7 @@ export default function Alertas() {
           setOpen(d.open);
           if (!d.open) {
             setForm(initialForm);
+            setBusquedaAM("");
             setEditingId(null);
             setViewMode(false);
             setAlertaView(null);
@@ -319,6 +379,16 @@ export default function Alertas() {
                             <Badge variant="outline">{getTipoAlertaLabel(alertaView.tipoAlerta)}</Badge>
                           </Box>
                           <DetailField label="Fecha de Detección" value={new Date(alertaView.fechaDeteccion).toLocaleString('es-AR')} />
+                          <DetailField
+                            label="Plazo límite de resolución"
+                            value={alertaView.fechaLimite ? new Date(alertaView.fechaLimite).toLocaleString('es-AR') : "Sin plazo (alerta anterior)"}
+                          />
+                          {alertaView.estado !== "resuelta" && alertaView.fechaLimite && (
+                            <Box>
+                              <Text fontWeight="600" color="gray.500" fontSize="sm" mb={1}>Estado del plazo:</Text>
+                              <VenceBadge fechaLimite={alertaView.fechaLimite} estado={alertaView.estado} />
+                            </Box>
+                          )}
                         </SimpleGridDetails>
                         <Box mt={4}>
                           <Text fontWeight="600" color="gray.500" fontSize="sm" mb={2}>Descripción del hecho:</Text>
@@ -391,20 +461,59 @@ export default function Alertas() {
                       <VStack align="stretch" gap={6} pt={2} borderTopWidth="1px" borderColor="gray.100">
                         <Field.Root required>
                           <Field.Label fontWeight="700">Titular Afectado</Field.Label>
-                          <NativeSelect.Root size="lg">
-                            <NativeSelect.Field
-                              value={form.adultoMayorId?.toString() || ""}
-                              onChange={e => setForm({ ...form, adultoMayorId: e.target.value ? Number(e.target.value) : undefined })}
-                            >
-                              <option value="">Seleccione o busque un adulto mayor...</option>
-                              {adultosMayores?.map((am: any) => (
-                                <option key={am.id} value={am.id.toString()}>
-                                  {am.nombre} {am.apellido} (DNI: {am.dni}) - Exp: {am.expediente}
-                                </option>
-                              ))}
-                            </NativeSelect.Field>
-                            <NativeSelect.Indicator />
-                          </NativeSelect.Root>
+                          <Box position="relative" w="full">
+                            <Input
+                              size="lg"
+                              pl={9}
+                              placeholder="Buscar por nombre o DNI..."
+                              value={busquedaAM}
+                              onChange={e => {
+                                setBusquedaAM(e.target.value);
+                                setForm({ ...form, adultoMayorId: undefined });
+                                setMostrarSugerencias(true);
+                              }}
+                              onFocus={() => setMostrarSugerencias(true)}
+                              onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+                              autoComplete="off"
+                            />
+                            <Box position="absolute" left={3} top="50%" transform="translateY(-50%)" color="gray.400" pointerEvents="none">
+                              <Search size={16} />
+                            </Box>
+
+                            {mostrarSugerencias && busquedaAM.trim() && !form.adultoMayorId && (
+                              <Card.Root position="absolute" top="calc(100% + 4px)" left={0} right={0} zIndex={20} maxH="240px" overflowY="auto" boxShadow="lg">
+                                <Card.Body p={1}>
+                                  {sugerenciasAM.length > 0 ? (
+                                    <VStack align="stretch" gap={0}>
+                                      {sugerenciasAM.map((am: any) => (
+                                        <Box
+                                          key={am.id}
+                                          px={3}
+                                          py={2}
+                                          borderRadius="md"
+                                          cursor="pointer"
+                                          _hover={{ bg: "bg.muted" }}
+                                          onMouseDown={e => {
+                                            e.preventDefault();
+                                            setForm({ ...form, adultoMayorId: am.id });
+                                            setBusquedaAM(`${am.nombre} ${am.apellido}`);
+                                            setMostrarSugerencias(false);
+                                          }}
+                                        >
+                                          <Text fontWeight="600" fontSize="sm">{am.nombre} {am.apellido}</Text>
+                                          <Text fontSize="xs" color="gray.500">DNI: {am.dni} - Exp: {am.expediente}</Text>
+                                        </Box>
+                                      ))}
+                                    </VStack>
+                                  ) : (
+                                    <Text px={3} py={2} fontSize="sm" color="gray.500">
+                                      Sin resultados para "{busquedaAM}"
+                                    </Text>
+                                  )}
+                                </Card.Body>
+                              </Card.Root>
+                            )}
+                          </Box>
                         </Field.Root>
 
                         <Grid templateColumns={{ base: "1fr", md: "1fr 1fr" }} gap={6}>
@@ -434,6 +543,11 @@ export default function Alertas() {
                               </NativeSelect.Field>
                               <NativeSelect.Indicator />
                             </NativeSelect.Root>
+                            {!editingId && (
+                              <Field.HelperText>
+                                Plazo para resolverla: <b>{PLAZO_TEXTO[form.prioridad]}</b> desde el registro.
+                              </Field.HelperText>
+                            )}
                           </Field.Root>
                         </Grid>
 
@@ -528,6 +642,7 @@ export default function Alertas() {
                       <Table.ColumnHeader w="110px">Prioridad</Table.ColumnHeader>
                       <Table.ColumnHeader w="120px">Estado</Table.ColumnHeader>
                       <Table.ColumnHeader>Título / Residente</Table.ColumnHeader>
+                      <Table.ColumnHeader w="170px">Plazo</Table.ColumnHeader>
                       <Table.ColumnHeader w="160px">Categoría</Table.ColumnHeader>
                       <Table.ColumnHeader w="150px">Responsable</Table.ColumnHeader>
                       <Table.ColumnHeader w="220px" textAlign="right">Acciones</Table.ColumnHeader>
@@ -553,6 +668,9 @@ export default function Alertas() {
                                 {adultoMayor ? `${adultoMayor.nombre} ${adultoMayor.apellido} (Exp: ${adultoMayor.expediente})` : "Titular no encontrado"}
                               </Text>
                             </VStack>
+                          </Table.Cell>
+                          <Table.Cell>
+                            <VenceBadge fechaLimite={alerta.fechaLimite} estado={alerta.estado} />
                           </Table.Cell>
                           <Table.Cell>
                             <Text fontSize="xs" fontWeight="500" color="fg.muted" bg="bg.muted" px={2} py={1} borderRadius="md" display="inline-block">

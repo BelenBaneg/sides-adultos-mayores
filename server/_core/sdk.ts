@@ -90,6 +90,10 @@ class SDKServer {
       throw ForbiddenError("El usuario de la sesión ya no existe");
     }
 
+    if (user.activo === false) {
+      throw ForbiddenError("Tu usuario se encuentra congelado. Contactá a la Superadmin.");
+    }
+
     await db.touchLastSignedIn(user.id);
 
     return user;

@@ -21,14 +21,16 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Scale, Plus, Edit } from "lucide-react";
-import { useState } from "react";
+import { Scale, Plus, Edit, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type DerivacionForm = {
   adultoMayorId: number | undefined;
   fechaDerivacion: string;
   motivo: string;
+  tipoDerivacion: "judicial" | "interna" | "externa";
+  dependencia: string;
   juzgado: string;
   numeroExpediente: string;
   fiscalia: string;
@@ -37,10 +39,36 @@ type DerivacionForm = {
   responsable: string;
 };
 
+const tipoLabels: Record<string, string> = {
+  judicial: "Judicial",
+  interna: "Interna",
+  externa: "Externa",
+};
+
+const tipoPalette: Record<string, string> = {
+  judicial: "purple.600",
+  interna: "teal.600",
+  externa: "orange.600",
+};
+
+function TipoBadge({ tipo }: { tipo?: string }) {
+  const t = tipo || "judicial";
+  return (
+    <Badge bg={tipoPalette[t] ?? "purple.600"} color="white">
+      {tipoLabels[t] ?? t}
+    </Badge>
+  );
+}
+
+// Destino: juzgado si es judicial, dependencia si es interna/externa
+const destinoDe = (d: any) => ((d.tipoDerivacion || "judicial") === "judicial" ? d.juzgado : d.dependencia) || "N/A";
+
 const initialForm: DerivacionForm = {
   adultoMayorId: undefined,
   fechaDerivacion: new Date().toISOString().split('T')[0],
   motivo: "",
+  tipoDerivacion: "judicial",
+  dependencia: "",
   juzgado: "",
   numeroExpediente: "",
   fiscalia: "",
@@ -77,8 +105,10 @@ export default function Derivaciones() {
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<DerivacionForm>(initialForm);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTipo, setEditTipo] = useState<string>("judicial");
   const [editForm, setEditForm] = useState({
     estadoDerivacion: "iniciada",
+    dependencia: "",
     numeroExpediente: "",
     fiscalia: "",
     documentacionAdjunta: "",
@@ -89,12 +119,28 @@ export default function Derivaciones() {
   const { data: adultosMayores } = trpc.adultosMayores.list.useQuery();
   const utils = trpc.useUtils();
 
+  const [busquedaAM, setBusquedaAM] = useState("");
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+
+  const sugerenciasAM = useMemo(() => {
+    const q = busquedaAM.trim().toLowerCase();
+    if (!q) return [];
+    return (adultosMayores ?? [])
+      .filter((am: any) => {
+        const nombreCompleto = `${am.nombre ?? ""} ${am.apellido ?? ""}`.toLowerCase();
+        const dni = (am.dni ?? "").toString().toLowerCase();
+        return nombreCompleto.includes(q) || dni.includes(q);
+      })
+      .slice(0, 8);
+  }, [adultosMayores, busquedaAM]);
+
   const createMutation = trpc.derivaciones.create.useMutation({
     onSuccess: () => {
       toast.success("Derivación registrada exitosamente");
       utils.derivaciones.list.invalidate();
       setOpen(false);
       setForm(initialForm);
+      setBusquedaAM("");
     },
     onError: (error) => {
       toast.error(error.message || "Error al registrar derivación");
@@ -125,9 +171,11 @@ export default function Derivaciones() {
       adultoMayorId: form.adultoMayorId,
       fechaDerivacion: form.fechaDerivacion, // Pasamos el string ISO o literal que infiera el router de backend
       motivo: form.motivo,
-      juzgado: form.juzgado,
+      tipoDerivacion: form.tipoDerivacion,
+      dependencia: form.tipoDerivacion !== "judicial" ? form.dependencia || undefined : undefined,
+      juzgado: form.tipoDerivacion === "judicial" ? form.juzgado || undefined : undefined,
       numeroExpediente: form.numeroExpediente || undefined,
-      fiscalia: form.fiscalia || undefined,
+      fiscalia: form.tipoDerivacion === "judicial" ? form.fiscalia || undefined : undefined,
       documentacionAdjunta: form.documentacionAdjunta || undefined,
       observaciones: form.observaciones || undefined,
       responsable: form.responsable || (user ? `${user.nombre} ${user.apellido}`.trim() : "Usuario"),
@@ -136,8 +184,10 @@ export default function Derivaciones() {
 
   const handleEdit = (derivacion: any) => {
     setEditingId(derivacion.id);
+    setEditTipo(derivacion.tipoDerivacion || "judicial");
     setEditForm({
       estadoDerivacion: derivacion.estadoDerivacion || "iniciada",
+      dependencia: derivacion.dependencia || "",
       numeroExpediente: derivacion.numeroExpediente || "",
       fiscalia: derivacion.fiscalia || "",
       documentacionAdjunta: derivacion.documentacionAdjunta || "",
@@ -153,6 +203,7 @@ export default function Derivaciones() {
     updateMutation.mutate({
       id: editingId,
       estadoDerivacion: editForm.estadoDerivacion as any,
+      dependencia: editTipo !== "judicial" ? editForm.dependencia || undefined : undefined,
       numeroExpediente: editForm.numeroExpediente || undefined,
       fiscalia: editForm.fiscalia || undefined,
       documentacionAdjunta: editForm.documentacionAdjunta || undefined,
@@ -178,9 +229,9 @@ export default function Derivaciones() {
     <VStack align="stretch" gap={6}>
       <Flex justify="space-between" align={{ base: "flex-start", md: "center" }} direction={{ base: "column", md: "row" }} gap={3}>
         <Box>
-          <Heading size="2xl" color="heading">Derivaciones Judiciales</Heading>
+          <Heading size="2xl" color="heading">Derivaciones</Heading>
           <Text color="gray.500" mt={2}>
-            Registro y seguimiento de casos derivados a la Justicia
+            Registro y seguimiento de casos derivados a la Justicia, a otras áreas internas o a organismos externos
           </Text>
         </Box>
         <Button bg="brand.600" color="white" _hover={{ bg: "brand.700" }} onClick={() => setOpen(true)}>
@@ -189,7 +240,7 @@ export default function Derivaciones() {
         </Button>
       </Flex>
 
-      <Dialog.Root open={open} onOpenChange={d => { setOpen(d.open); if (!d.open) setForm(initialForm); }}>
+      <Dialog.Root open={open} onOpenChange={d => { setOpen(d.open); if (!d.open) { setForm(initialForm); setBusquedaAM(""); } }}>
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
@@ -197,9 +248,9 @@ export default function Derivaciones() {
               <form onSubmit={handleSubmit}>
                 <Dialog.Header>
                   <Box>
-                    <Dialog.Title color="heading">Nueva Derivación Judicial</Dialog.Title>
+                    <Dialog.Title color="heading">Nueva Derivación</Dialog.Title>
                     <Dialog.Description>
-                      Registre una nueva derivación de caso a la Justicia
+                      Registre una nueva derivación judicial, interna o externa
                     </Dialog.Description>
                   </Box>
                 </Dialog.Header>
@@ -207,20 +258,58 @@ export default function Derivaciones() {
                   <VStack align="stretch" gap={4}>
                     <Field.Root required>
                       <Field.Label>Adulto Mayor</Field.Label>
-                      <NativeSelect.Root>
-                        <NativeSelect.Field
-                          value={form.adultoMayorId?.toString() || ""}
-                          onChange={e => setForm({ ...form, adultoMayorId: e.target.value ? Number(e.target.value) : undefined })}
-                        >
-                          <option value="">Seleccione un adulto mayor</option>
-                          {adultosMayores?.map((am: any) => (
-                            <option key={am.id} value={am.id.toString()}>
-                              {am.nombre} {am.apellido}
-                            </option>
-                          ))}
-                        </NativeSelect.Field>
-                        <NativeSelect.Indicator />
-                      </NativeSelect.Root>
+                      <Box position="relative" w="full">
+                        <Input
+                          pl={9}
+                          placeholder="Buscar por nombre o DNI..."
+                          value={busquedaAM}
+                          onChange={e => {
+                            setBusquedaAM(e.target.value);
+                            setForm({ ...form, adultoMayorId: undefined });
+                            setMostrarSugerencias(true);
+                          }}
+                          onFocus={() => setMostrarSugerencias(true)}
+                          onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+                          autoComplete="off"
+                        />
+                        <Box position="absolute" left={3} top="50%" transform="translateY(-50%)" color="gray.400" pointerEvents="none">
+                          <Search size={16} />
+                        </Box>
+
+                        {mostrarSugerencias && busquedaAM.trim() && !form.adultoMayorId && (
+                          <Card.Root position="absolute" top="calc(100% + 4px)" left={0} right={0} zIndex={20} maxH="240px" overflowY="auto" boxShadow="lg">
+                            <Card.Body p={1}>
+                              {sugerenciasAM.length > 0 ? (
+                                <VStack align="stretch" gap={0}>
+                                  {sugerenciasAM.map((am: any) => (
+                                    <Box
+                                      key={am.id}
+                                      px={3}
+                                      py={2}
+                                      borderRadius="md"
+                                      cursor="pointer"
+                                      _hover={{ bg: "bg.muted" }}
+                                      onMouseDown={e => {
+                                        e.preventDefault();
+                                        setForm({ ...form, adultoMayorId: am.id });
+                                        setBusquedaAM(`${am.nombre} ${am.apellido}`);
+                                        setMostrarSugerencias(false);
+                                      }}
+                                    >
+                                      <Text fontWeight="600" fontSize="sm">{am.nombre} {am.apellido}</Text>
+                                      <Text fontSize="xs" color="gray.500">DNI: {am.dni}</Text>
+                                    </Box>
+                                  ))}
+                                </VStack>
+                              ) : (
+                                <Text px={3} py={2} fontSize="sm" color="gray.500">
+                                  Sin resultados para "{busquedaAM}"
+                                </Text>
+                              )}
+                            </Card.Body>
+                          </Card.Root>
+                        )}
+                      </Box>
                     </Field.Root>
 
                     <SimpleGrid columns={{ base: 1, sm: 2 }} gap={4}>
@@ -249,34 +338,77 @@ export default function Derivaciones() {
                       />
                     </Field.Root>
 
-                    <SimpleGrid columns={{ base: 1, sm: 2 }} gap={4}>
-                      <Field.Root required>
-                        <Field.Label>Juzgado</Field.Label>
-                        <Input
-                          placeholder="Ej: Juzgado de Familia N° 2"
-                          value={form.juzgado}
-                          onChange={e => setForm({ ...form, juzgado: e.target.value })}
-                          required
-                        />
-                      </Field.Root>
-                      <Field.Root>
-                        <Field.Label>Número Expediente</Field.Label>
-                        <Input
-                          placeholder="Ej: EXP-12345/2026"
-                          value={form.numeroExpediente}
-                          onChange={e => setForm({ ...form, numeroExpediente: e.target.value })}
-                        />
-                      </Field.Root>
-                    </SimpleGrid>
-
-                    <Field.Root>
-                      <Field.Label>Fiscalía</Field.Label>
-                      <Input
-                        placeholder="Ej: Fiscalía de Instrucción N° 1"
-                        value={form.fiscalia}
-                        onChange={e => setForm({ ...form, fiscalia: e.target.value })}
-                      />
+                    <Field.Root required>
+                      <Field.Label>Tipo de Derivación</Field.Label>
+                      <NativeSelect.Root>
+                        <NativeSelect.Field
+                          value={form.tipoDerivacion}
+                          onChange={e => setForm({ ...form, tipoDerivacion: e.target.value as DerivacionForm["tipoDerivacion"] })}
+                        >
+                          <option value="judicial">Judicial</option>
+                          <option value="interna">Interna</option>
+                          <option value="externa">Externa</option>
+                        </NativeSelect.Field>
+                        <NativeSelect.Indicator />
+                      </NativeSelect.Root>
                     </Field.Root>
+
+                    {form.tipoDerivacion === "judicial" ? (
+                      <>
+                        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={4}>
+                          <Field.Root required>
+                            <Field.Label>Juzgado</Field.Label>
+                            <Input
+                              placeholder="Ej: Juzgado de Familia N° 2"
+                              value={form.juzgado}
+                              onChange={e => setForm({ ...form, juzgado: e.target.value })}
+                              required
+                            />
+                          </Field.Root>
+                          <Field.Root>
+                            <Field.Label>Número Expediente</Field.Label>
+                            <Input
+                              placeholder="Ej: EXP-12345/2026"
+                              value={form.numeroExpediente}
+                              onChange={e => setForm({ ...form, numeroExpediente: e.target.value })}
+                            />
+                          </Field.Root>
+                        </SimpleGrid>
+
+                        <Field.Root>
+                          <Field.Label>Fiscalía</Field.Label>
+                          <Input
+                            placeholder="Ej: Fiscalía de Instrucción N° 1"
+                            value={form.fiscalia}
+                            onChange={e => setForm({ ...form, fiscalia: e.target.value })}
+                          />
+                        </Field.Root>
+                      </>
+                    ) : (
+                      <SimpleGrid columns={{ base: 1, sm: 2 }} gap={4}>
+                        <Field.Root required>
+                          <Field.Label>Dependencia</Field.Label>
+                          <Input
+                            placeholder={
+                              form.tipoDerivacion === "interna"
+                                ? "Ej: Dirección de Salud, Área Legal..."
+                                : "Ej: Hospital Independencia, ANSES, PAMI..."
+                            }
+                            value={form.dependencia}
+                            onChange={e => setForm({ ...form, dependencia: e.target.value })}
+                            required
+                          />
+                        </Field.Root>
+                        <Field.Root>
+                          <Field.Label>Número de Expediente / Nota</Field.Label>
+                          <Input
+                            placeholder="Opcional"
+                            value={form.numeroExpediente}
+                            onChange={e => setForm({ ...form, numeroExpediente: e.target.value })}
+                          />
+                        </Field.Root>
+                      </SimpleGrid>
+                    )}
 
                     <Field.Root>
                       <Field.Label>Documentación Adjunta</Field.Label>
@@ -325,7 +457,8 @@ export default function Derivaciones() {
                     <Table.Row bg="bg.muted">
                       <Table.ColumnHeader>Adulto Mayor</Table.ColumnHeader>
                       <Table.ColumnHeader>Fecha Derivación</Table.ColumnHeader>
-                      <Table.ColumnHeader>Juzgado</Table.ColumnHeader>
+                      <Table.ColumnHeader>Tipo</Table.ColumnHeader>
+                      <Table.ColumnHeader>Juzgado / Dependencia</Table.ColumnHeader>
                       <Table.ColumnHeader>Expediente</Table.ColumnHeader>
                       <Table.ColumnHeader>Estado</Table.ColumnHeader>
                       <Table.ColumnHeader textAlign="right">Acciones</Table.ColumnHeader>
@@ -340,7 +473,8 @@ export default function Derivaciones() {
                             {adultoMayor ? `${adultoMayor.nombre} ${adultoMayor.apellido}` : "N/A"}
                           </Table.Cell>
                           <Table.Cell>{derivacion.fechaDerivacion ? new Date(derivacion.fechaDerivacion).toLocaleDateString('es-AR') : "N/A"}</Table.Cell>
-                          <Table.Cell>{derivacion.juzgado || "N/A"}</Table.Cell>
+                          <Table.Cell><TipoBadge tipo={derivacion.tipoDerivacion} /></Table.Cell>
+                          <Table.Cell>{destinoDe(derivacion)}</Table.Cell>
                           <Table.Cell>{derivacion.numeroExpediente || "N/A"}</Table.Cell>
                           <Table.Cell>
                             <EstadoBadge estado={derivacion.estadoDerivacion} />
@@ -378,7 +512,7 @@ export default function Derivaciones() {
                         <Box flex={1}>
                           <Card.Title display="flex" alignItems="center" gap={2} fontSize="md">
                             <Scale size={16} color="var(--chakra-colors-brand-600)" />
-                            Derivación Judicial
+                            Derivación {tipoLabels[derivacion.tipoDerivacion || "judicial"]}
                           </Card.Title>
                           <Card.Description mt={1} color="brand.700" fontWeight="500">
                             {adultoMayor ? `${adultoMayor.nombre} ${adultoMayor.apellido}` : "N/A"}
@@ -390,9 +524,18 @@ export default function Derivaciones() {
                     <Card.Body pt={0}>
                       <VStack align="stretch" gap={2} fontSize="sm" color="gray.600">
                         <Text><Text as="span" fontWeight="700" color="fg">Fecha:</Text> {derivacion.fechaDerivacion ? new Date(derivacion.fechaDerivacion).toLocaleDateString('es-AR') : "N/A"}</Text>
-                        <Text><Text as="span" fontWeight="700" color="fg">Juzgado:</Text> {derivacion.juzgado || "N/A"}</Text>
-                        <Text><Text as="span" fontWeight="700" color="fg">Expediente:</Text> {derivacion.numeroExpediente || "N/A"}</Text>
-                        <Text><Text as="span" fontWeight="700" color="fg">Fiscalía:</Text> {derivacion.fiscalia || "N/A"}</Text>
+                        {(derivacion.tipoDerivacion || "judicial") === "judicial" ? (
+                          <>
+                            <Text><Text as="span" fontWeight="700" color="fg">Juzgado:</Text> {derivacion.juzgado || "N/A"}</Text>
+                            <Text><Text as="span" fontWeight="700" color="fg">Expediente:</Text> {derivacion.numeroExpediente || "N/A"}</Text>
+                            <Text><Text as="span" fontWeight="700" color="fg">Fiscalía:</Text> {derivacion.fiscalia || "N/A"}</Text>
+                          </>
+                        ) : (
+                          <>
+                            <Text><Text as="span" fontWeight="700" color="fg">Dependencia:</Text> {derivacion.dependencia || "N/A"}</Text>
+                            <Text><Text as="span" fontWeight="700" color="fg">Expediente / Nota:</Text> {derivacion.numeroExpediente || "N/A"}</Text>
+                          </>
+                        )}
                         {derivacion.motivo && (
                           <Box pt={1}>
                             <Text fontWeight="700" color="fg">Motivo:</Text>
@@ -448,10 +591,17 @@ export default function Derivaciones() {
                         <Field.Label>Número Expediente</Field.Label>
                         <Input value={editForm.numeroExpediente} onChange={e => setEditForm({ ...editForm, numeroExpediente: e.target.value })} />
                       </Field.Root>
-                      <Field.Root>
-                        <Field.Label>Fiscalía</Field.Label>
-                        <Input value={editForm.fiscalia} onChange={e => setEditForm({ ...editForm, fiscalia: e.target.value })} />
-                      </Field.Root>
+                      {editTipo === "judicial" ? (
+                        <Field.Root>
+                          <Field.Label>Fiscalía</Field.Label>
+                          <Input value={editForm.fiscalia} onChange={e => setEditForm({ ...editForm, fiscalia: e.target.value })} />
+                        </Field.Root>
+                      ) : (
+                        <Field.Root>
+                          <Field.Label>Dependencia</Field.Label>
+                          <Input value={editForm.dependencia} onChange={e => setEditForm({ ...editForm, dependencia: e.target.value })} />
+                        </Field.Root>
+                      )}
                     </SimpleGrid>
                     <Field.Root>
                       <Field.Label>Documentación Adjunta</Field.Label>

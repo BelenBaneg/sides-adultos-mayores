@@ -35,7 +35,18 @@ const auditarCambios = t.middleware(async ({ ctx, next, type, path, getRawInput 
   return result;
 });
 
-export const protectedProcedure = t.procedure.use(requireUser).use(auditarCambios);
+// El rol "user" (Consulta) es de solo lectura: no puede crear, editar ni eliminar nada.
+const soloLecturaParaConsulta = t.middleware(async ({ ctx, next, type }) => {
+  if (type === "mutation" && ctx.user?.role === "user") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Tu rol es de solo consulta: no tenés permiso para modificar datos.",
+    });
+  }
+  return next();
+});
+
+export const protectedProcedure = t.procedure.use(requireUser).use(soloLecturaParaConsulta).use(auditarCambios);
 
 export const adminProcedure = t.procedure.use(
   t.middleware(async ({ ctx, next }) => {

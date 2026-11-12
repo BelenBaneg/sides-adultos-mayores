@@ -25,6 +25,10 @@ const ACCION_LABEL: Record<string, string> = {
   editar: "Edición",
   eliminar: "Eliminación",
   baja: "Baja",
+  cambio_password: "Cambio de contraseña",
+  congelar: "Congelar / Reactivar usuario",
+  adjuntar: "Adjuntar archivo",
+  ver_archivo: "Abrió un archivo",
 };
 
 const ACCION_COLOR: Record<string, string> = {
@@ -35,6 +39,10 @@ const ACCION_COLOR: Record<string, string> = {
   editar: "orange.500",
   eliminar: "red.600",
   baja: "purple.500",
+  cambio_password: "teal.500",
+  congelar: "cyan.600",
+  adjuntar: "blue.600",
+  ver_archivo: "gray.600",
 };
 
 const MODULO_LABEL: Record<string, string> = {
@@ -46,6 +54,8 @@ const MODULO_LABEL: Record<string, string> = {
   seguimientos: "Seguimientos",
   alertas: "Alertas",
   derivaciones: "Derivaciones",
+  fichasFirmadas: "Fichas firmadas",
+  residenciaDocumentos: "Documentación de residencias",
 };
 
 const CAMPO_LABEL: Record<string, string> = {
@@ -65,6 +75,7 @@ const CAMPO_LABEL: Record<string, string> = {
   localidad: "Localidad",
   email: "Correo",
   role: "Rol",
+  activo: "Usuario activo",
   motivo: "Motivo",
   motivoBaja: "Motivo de baja",
   motivoBajaDetalle: "Detalle del motivo",
@@ -81,6 +92,9 @@ const CAMPO_LABEL: Record<string, string> = {
   estadoHabilitacion: "Habilitación",
   sugerencia: "Sugerencia",
   adultoMayorId: "Adulto mayor (ID)",
+  residenciaId: "Residencia (ID)",
+  requisito: "Requisito",
+  nombreArchivo: "Archivo",
 };
 
 // Campos que mejor identifican el registro, en orden de importancia.

@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { encabezadosSeguridad, limitarPeticiones } from "./seguridad";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -30,13 +31,20 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  
-  // tRPC API
+  // Render (y cualquier proxy) agrega la IP real en X-Forwarded-For
+  app.set("trust proxy", 1);
+
+  // Encabezados de seguridad en todas las respuestas
+  app.use(encabezadosSeguridad);
+
+  // Límite de tamaño para subida de archivos (los archivos están limitados a ~10 MB)
+  app.use(express.json({ limit: "20mb" }));
+  app.use(express.urlencoded({ limit: "1mb", extended: true }));
+
+  // tRPC API (con límite de peticiones por IP)
   app.use(
     "/api/trpc",
+    limitarPeticiones,
     createExpressMiddleware({
       router: appRouter,
       createContext,

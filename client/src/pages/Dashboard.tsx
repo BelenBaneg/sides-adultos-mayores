@@ -13,7 +13,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Building2, History, LayoutDashboard, Users } from "lucide-react";
+import { AlertCircle, AlertTriangle, Building2, History, LayoutDashboard, Timer, Users } from "lucide-react";
 import { useLocation } from "wouter";
 
 const prioridadPalette: Record<string, { bg: string; color: string }> = {
@@ -106,7 +106,7 @@ export default function Dashboard() {
         </Text>
       </Box>
 
-      <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={3}>
+      <SimpleGrid columns={{ base: 1, md: 2, lg: 5 }} gap={3}>
         <StatCard
           label="Adultos Mayores"
           value={stats?.totalAdultosMayores || 0}
@@ -132,6 +132,15 @@ export default function Dashboard() {
           loading={statsLoading}
           accent="red.600"
         />
+        <Box cursor="pointer" onClick={() => setLocation("/alertas")} title="Ver alertas">
+          <StatCard
+            label="Alertas Vencidas"
+            value={stats?.alertasVencidas || 0}
+            icon={Timer}
+            loading={statsLoading}
+            accent="red.600"
+          />
+        </Box>
       </SimpleGrid>
 
       <SimpleGrid columns={{ base: 1, lg: 2 }} gap={4} alignItems="start">
@@ -178,6 +187,9 @@ export default function Dashboard() {
                           {alerta.prioridad.toUpperCase()}
                         </Badge>
                         <Badge variant="outline">{tipoAlertaLabels[alerta.tipoAlerta] || alerta.tipoAlerta}</Badge>
+                        {alerta.fechaLimite && new Date(alerta.fechaLimite).getTime() < Date.now() && (
+                          <Badge bg="red.600" color="white">VENCIDA</Badge>
+                        )}
                       </HStack>
                       <Text fontWeight="700" fontSize="sm">{alerta.titulo}</Text>
                       <Text fontSize="xs" color="gray.500" lineClamp={1}>

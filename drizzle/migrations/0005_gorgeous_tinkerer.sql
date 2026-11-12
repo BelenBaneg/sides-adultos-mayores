@@ -1,0 +1,1 @@
+ALTER TABLE "alertas" ADD COLUMN "fechaLimite" timestamp;

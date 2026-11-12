@@ -18,6 +18,7 @@ import {
 import {
   Archive,
   BarChart3,
+  Download,
   CalendarRange,
   Filter,
   Landmark,
@@ -30,6 +31,8 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Bar,
   BarChart,
@@ -315,17 +318,134 @@ export default function Estadisticas() {
       .slice(-12);
   }, [datosFiltrados]);
 
+  const handleExportarPDF = () => {
+    const ahora = new Date();
+    const fechaExport = ahora.toLocaleString("es-AR");
+    const doc = new jsPDF({ orientation: "portrait" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFontSize(16);
+    doc.setTextColor(91, 45, 142);
+    doc.text("SIDES - Estadísticas de Adultos Mayores", 14, 16);
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text("Ministerio de Desarrollo Social - Santiago del Estero", 14, 22);
+    doc.text(`Fecha de exportación: ${fechaExport}`, pageWidth - 14, 16, { align: "right" });
+
+    const filtrosTxt = [
+      `Localidad: ${filtroLocalidad === "todas" ? "Todas" : filtroLocalidad}`,
+      `Barrio: ${filtroBarrio === "todos" ? "Todos" : filtroBarrio}`,
+      `Género: ${filtroGenero === "todos" ? "Todos" : filtroGenero}`,
+      `Ingresó desde: ${filtroDesde ? new Date(filtroDesde + "T00:00:00").toLocaleDateString("es-AR") : "-"}`,
+      `Ingresó hasta: ${filtroHasta ? new Date(filtroHasta + "T00:00:00").toLocaleDateString("es-AR") : "-"}`,
+    ].join("   |   ");
+    doc.text(`Filtros aplicados: ${filtrosTxt}`, 14, 28, { maxWidth: pageWidth - 28 });
+
+    const estiloTabla = {
+      styles: { fontSize: 9, cellPadding: 2.5 },
+      headStyles: { fillColor: [91, 45, 142] as [number, number, number], textColor: 255, fontStyle: "bold" as const },
+      alternateRowStyles: { fillColor: [246, 243, 250] as [number, number, number] },
+    };
+
+    const ingresosMes = datosFiltrados.filter((a: any) => {
+      if (!a.createdAt) return false;
+      const d = new Date(a.createdAt);
+      return d.getFullYear() === ahora.getFullYear() && d.getMonth() === ahora.getMonth();
+    }).length;
+
+    autoTable(doc, {
+      startY: 36,
+      head: [["Indicador", "Cantidad"]],
+      body: [
+        ["Adultos mayores activos", String(activos.length)],
+        ["Dados de baja", String(bajas.length)],
+        ["Total (con estos filtros)", String(datosFiltrados.length)],
+        ["Ingresos este mes", String(ingresosMes)],
+      ],
+      ...estiloTabla,
+    });
+
+    const agregarDistribucion = (titulo: string, datos: { name: string; value: number }[], columna: string) => {
+      const total = datos.reduce((acc, d) => acc + d.value, 0);
+      let y = (doc as any).lastAutoTable.finalY + 10;
+      if (y > 255) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(12);
+      doc.setTextColor(91, 45, 142);
+      doc.text(titulo, 14, y);
+      autoTable(doc, {
+        startY: y + 3,
+        head: [[columna, "Cantidad", "Porcentaje"]],
+        body: datos.length
+          ? datos.map(d => [d.name, String(d.value), total ? `${((d.value / total) * 100).toFixed(1)}%` : "0%"])
+          : [["Sin datos", "-", "-"]],
+        ...estiloTabla,
+      });
+    };
+
+    agregarDistribucion("Distribución por Barrio", porBarrio, "Barrio");
+    agregarDistribucion("Distribución por Localidad", porLocalidad, "Localidad");
+    agregarDistribucion("Distribución por Género", porGenero, "Género");
+    agregarDistribucion("Distribución por Rango Etario", porRangoEtario, "Rango");
+
+    // Ingresos y bajas por mes
+    {
+      let y = (doc as any).lastAutoTable.finalY + 10;
+      if (y > 255) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(12);
+      doc.setTextColor(91, 45, 142);
+      doc.text("Ingresos y Bajas por Mes", 14, y);
+      autoTable(doc, {
+        startY: y + 3,
+        head: [["Mes", "Ingresos", "Bajas"]],
+        body: movimientosPorMes.length
+          ? movimientosPorMes.map(m => [m.mes, String(m.altas), String(m.bajas)])
+          : [["Sin datos", "-", "-"]],
+        ...estiloTabla,
+      });
+    }
+
+    // Pie de página con fecha de exportación y número de página
+    const totalPaginas = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPaginas; i++) {
+      doc.setPage(i);
+      const h = doc.internal.pageSize.getHeight();
+      doc.setFontSize(8);
+      doc.setTextColor(130);
+      doc.text(`Exportado el ${fechaExport}`, 14, h - 8);
+      doc.text(`Página ${i} de ${totalPaginas}`, pageWidth - 14, h - 8, { align: "right" });
+    }
+
+    doc.save(`estadisticas_${ahora.toISOString().split("T")[0]}.pdf`);
+  };
+
   return (
     <VStack align="stretch" gap={6}>
-      <Box>
-        <Heading size="2xl" color="heading" display="flex" alignItems="center" gap={2}>
-          <BarChart3 size={30} color="var(--chakra-colors-brand-600)" />
-          Estadísticas
-        </Heading>
-        <Text color="gray.500" mt={2}>
-          Indicadores generales sobre los adultos mayores registrados
-        </Text>
-      </Box>
+      <Flex justify="space-between" align="flex-start" gap={3} wrap="wrap">
+        <Box>
+          <Heading size="2xl" color="heading" display="flex" alignItems="center" gap={2}>
+            <BarChart3 size={30} color="var(--chakra-colors-brand-600)" />
+            Estadísticas
+          </Heading>
+          <Text color="gray.500" mt={2}>
+            Indicadores generales sobre los adultos mayores registrados
+          </Text>
+        </Box>
+        <Button
+          bg="brand.600"
+          color="white"
+          _hover={{ bg: "brand.700" }}
+          onClick={handleExportarPDF}
+          disabled={isLoading}
+        >
+          <Download size={16} /> Exportar PDF
+        </Button>
+      </Flex>
 
       <Card.Root>
         <Card.Body py={4}>

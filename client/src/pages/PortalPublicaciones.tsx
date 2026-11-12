@@ -1,7 +1,7 @@
 import { Box, Button, Card, Flex, Heading, Text, VStack } from "@chakra-ui/react";
 import { ExternalLink, Newspaper } from "lucide-react";
 
-const PORTAL_URL = "https://87h75b1r-3000.brs.devtunnels.ms/";
+const PORTAL_URL = "https://portal-publicaciones-am.onrender.com/";
 
 // Texto que se muestra debajo del botón. Cambialo acá cuando tengas la leyenda definitiva.
 const LEYENDA =
